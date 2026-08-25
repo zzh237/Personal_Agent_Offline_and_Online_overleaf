@@ -26,6 +26,10 @@
 \newcommand{\stream}{D_u^{(t)}}
 \newcommand{\checkpoint}{c_u^{(t)}}
 
+\newenvironment{settingpointer}
+  {\begin{quote}\small\noindent\textbf{Setting pointer.}\ }
+  {\end{quote}}
+
 \hypersetup{
   colorlinks=true,
   linkcolor=MidnightBlue,
@@ -41,20 +45,6 @@ One-User Offline-to-Online Personalized Policies}
 
 \begin{document}
 \maketitle
-
-\begin{abstract}
-We study one persistent policy for one user.  The policy is initialized from
-that user's thoughts, conversations, corrections, and task trajectories, then
-updated from later interactions.  This setting joins problems that the
-literature usually studies separately: sparse preference identification,
-offline initialization, online adaptation, continual learning, agent credit
-assignment, user simulation, privacy, and efficient deployment.  We organize
-these problems, state the claim that best distinguishes our work, and define
-the evidence required to support it.  The central test is not whether a model
-can recall a profile.  It is whether a user-owned policy can improve on
-untouched future tasks after real parameter updates, while task success and
-safety remain non-inferior.
-\end{abstract}
 
 \section{Setting}
 \label{sec:setting}
@@ -122,6 +112,61 @@ competence and safety:
 Task success and personalization are therefore co-primary measurements.  One
 cannot compensate numerically for the failure of the other.
 
+\section{Exact-Match Filter}
+\label{sec:filter}
+
+A paper belongs to our exact setting only when it satisfies all five
+conditions:
+\begin{enumerate}[label=\textbf{A\arabic*.}]
+  \item it maintains a persistent policy for one identified user;
+  \item it initializes that policy from the same user's historical evidence;
+  \item after deployment, new evidence from that user causes further updates;
+  \item the policy acts in an agent task with actions, tools, or execution
+  decisions; and
+  \item the updated object includes parameters of the language-model policy,
+  rather than only a profile, memory, reward model, decoder, or external
+  controller.
+\end{enumerate}
+Here \emph{online} has a strict meaning: same-user evidence arrives after
+deployment and is followed by a parameter update.  Fresh rollouts collected
+inside one centralized training job are useful online-training evidence, but
+they are not by themselves post-deployment continual personalization.
+
+No cited method satisfies all five conditions.  The problems below are
+therefore ranked by how directly they define the missing method, rather than
+by how often related keywords appear in prior work.
+
+\begin{table}[h]
+  \centering
+  \caption{Filtered priority of the twelve problems.  Tier is about relevance
+  to our target method; it does not imply that the cited papers share our
+  setting.}
+  \label{tab:problem-priority}
+  \small
+  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}L{0.18\textwidth}Y@{}}
+    \toprule
+    Priority & Problems & Role in the project \\
+    \midrule
+    Tier 1: method-defining &
+    P4, P5, P6, P8, P9 &
+    Offline initialization, the offline--online handoff, continual retention,
+    agent execution, and trajectory credit form the core algorithm. \\
+    Tier 2: necessary support &
+    P1, P2, P12 &
+    User-evidence interpretation and future-behavior evaluation are required
+    to make the core method meaningful and testable. \\
+    Tier 3: secondary claims &
+    P7, P11 &
+    Feedback efficiency and serving efficiency matter, but should become
+    headline claims only after dedicated comparisons pass. \\
+    Tier 4: optional scope &
+    P3, P10 &
+    Cold start and simulator training are useful extensions, not requirements
+    for the current known-user offline-to-online claim. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
 \section{Problems Studied in This Setting}
 \label{sec:problems}
 
@@ -138,6 +183,22 @@ from few preference examples \citep{singh2025fspo}.  The open question for us
 is whether one policy can use the target user's complete history without
 reducing it to a textual profile.
 
+\begin{settingpointer}
+\textbf{Role:} Tier 2, necessary support.
+\textbf{One user:} mixed; the methods represent individual preferences, but
+several learn through shared users, groups, or population structure.
+\textbf{Offline initialization:} yes.
+\textbf{Post-deployment online update:} no.
+\textbf{Personalized agent:} no; the evidence concerns response preference or
+alignment.
+\textbf{LLM-policy parameter training:} mixed; P-RLHF, PROPER, and FSPO train
+generative-policy parameters, whereas CoPL primarily trains a personalized
+reward model.
+\textbf{Difference from us:} these papers infer preferences from fixed
+datasets; they do not update one deployed user's agent policy from later task
+trajectories.
+\end{settingpointer}
+
 \paragraph{P2: separate persistent preference from transient context.}
 A recent request may reflect a lasting preference, a temporary task
 constraint, or noise.  SPRInG treats this as a drift-selection problem before
@@ -146,6 +207,20 @@ harder because failure may come from task reasoning, tool execution, or a
 wrong preference assumption.  A useful update must identify which part of the
 trace is evidence about the user.
 
+\begin{settingpointer}
+\textbf{Role:} Tier 2, necessary support.
+\textbf{One user:} yes; SPRInG maintains a distinct adapter and memory for
+each user.
+\textbf{Offline initialization:} yes, from period-0 user history.
+\textbf{Post-deployment online update:} no; later periods are a retrospective
+chronological simulation over a fixed corpus.
+\textbf{Personalized agent:} no; evaluation is personalized text generation.
+\textbf{LLM-policy parameter training:} yes, through per-user LoRA updates.
+\textbf{Difference from us:} SPRInG supplies a close continual-personalization
+component, but not live agent trajectories or a deployed offline-to-online
+agent loop.
+\end{settingpointer}
+
 \paragraph{P3: handle cold start without losing ownership.}
 Sharing population structure improves few-shot adaptation, as explored by
 collaborative, group-level, and federated personalized models
@@ -153,6 +228,21 @@ collaborative, group-level, and federated personalized models
 cross-user transfer conflicts with the one-user ownership boundary.  The
 problem is to use a consented prior while keeping the target user's updates,
 state, and evaluation distinct.
+
+\begin{settingpointer}
+\textbf{Role:} Tier 4, optional scope.
+\textbf{One user:} partial; a target user or client is represented, but the
+methods deliberately borrow structure across users.
+\textbf{Offline initialization:} yes.
+\textbf{Post-deployment online update:} no.
+\textbf{Personalized agent:} no.
+\textbf{LLM-policy parameter training:} mixed; PROPER and FedPDPO train
+personalized language-model components, while CoPL's personalized object is a
+reward model.
+\textbf{Difference from us:} these are collaborative or federated offline
+personalization methods, whereas our current claim starts with a known user's
+own history and does not require population-assisted cold start.
+\end{settingpointer}
 
 \subsection{Moving from offline history to online learning}
 
@@ -164,6 +254,20 @@ shows why a warm start matters for sparse-reward agent learning
 \citep{qi2025webrl}.  High offline fit alone is not enough if the resulting
 policy cannot improve from new evidence.
 
+\begin{settingpointer}
+\textbf{Role:} Tier 1, method-defining.
+\textbf{One user:} split; OPPU is per-user, while WebRL has no user identity.
+\textbf{Offline initialization:} yes in both lines.
+\textbf{Post-deployment online update:} no; WebRL's fresh rollouts occur
+inside benchmark training, and OPPU is offline-only.
+\textbf{Personalized agent:} split; WebRL is an agent but not personalized,
+whereas OPPU is personalized but not an agent method.
+\textbf{LLM-policy parameter training:} yes.
+\textbf{Difference from us:} the two papers supply complementary halves, but
+neither initializes and then continually updates one user's deployed agent
+policy.
+\end{settingpointer}
+
 \paragraph{P5: cross the offline--online boundary without a performance dip.}
 Offline records were produced by older policies and may not cover actions
 preferred by the current policy.  The LLM literature studies policy-generator
@@ -173,6 +277,21 @@ expansion protects useful offline behavior during exploration
 \citep{zhang2023pex}.  Our version must additionally preserve user identity,
 feedback provenance, and checkpoint lineage.
 
+\begin{settingpointer}
+\textbf{Role:} Tier 1, method-defining.
+\textbf{One user:} no.
+\textbf{Offline initialization:} yes.
+\textbf{Post-deployment online update:} no in our strict sense; ``online''
+denotes fresh training-time rollouts or queries.
+\textbf{Personalized agent:} no.
+\textbf{LLM-policy parameter training:} mixed; Bridging updates an LLM policy,
+while hybrid preference optimization and policy expansion are broader
+optimization formulations.
+\textbf{Difference from us:} these methods solve the optimization handoff
+without same-user deployment, personal checkpoint lineage, or personalized
+agent evidence.
+\end{settingpointer}
+
 \paragraph{P6: adapt to drift without forgetting or chasing noise.}
 Continual personalization must learn changed preferences while retaining
 stable ones.  SPRInG selects high-drift interactions and keeps residual
@@ -181,14 +300,46 @@ of staleness because behavior and learner policies diverge
 \citep{huang2026stable}.  Success therefore requires both preference-level
 retention and valid use of old trajectories.
 
+\begin{settingpointer}
+\textbf{Role:} Tier 1, method-defining.
+\textbf{One user:} split; SPRInG is per-user, while Stable Asynchrony is not
+personalized.
+\textbf{Offline initialization:} yes for SPRInG; Stable Asynchrony has no
+personalized offline initializer.
+\textbf{Post-deployment online update:} no; both evaluations remain
+training-time or retrospective.
+\textbf{Personalized agent:} no.
+\textbf{LLM-policy parameter training:} yes.
+\textbf{Difference from us:} SPRInG addresses preference drift and Stable
+Asynchrony addresses stale LLM-RL trajectories, but neither combines both in
+a deployed personalized agent.
+\end{settingpointer}
+
 \paragraph{P7: learn quickly while minimizing user burden.}
 Online feedback is expensive.  The method should choose interactions that
 distinguish plausible user preferences, rather than requesting labels for
 easy or redundant examples.  Hybrid preference optimization formalizes the
-offline-data versus online-query tradeoff \citep{bose2024hybrid}; FABLE treats
-per-user execution choices as an online bandit \citep{jin2026fable}.  In our
-setting, quick adaptation means fewer real interactions or corrections to
-reach a fixed future-task utility, not merely fewer optimizer steps.
+offline-data versus online-query tradeoff \citep{bose2024hybrid}; FABLE is a
+pure-online method that learns a per-user execution policy as a contextual
+bandit \citep{jin2026fable}.  In our setting, quick adaptation means fewer
+real interactions or corrections to reach a fixed future-task utility, not
+merely fewer optimizer steps.
+
+\begin{settingpointer}
+\textbf{Role:} Tier 3, secondary claim.
+\textbf{One user:} mixed; FABLE is per-user, while hybrid preference
+optimization is not.
+\textbf{Offline initialization:} split; hybrid optimization uses offline
+preferences, whereas FABLE has no learned offline initializer.
+\textbf{Post-deployment online update:} yes for FABLE, which is pure online;
+not in the target sense for the hybrid method.
+\textbf{Personalized agent:} yes for FABLE.
+\textbf{LLM-policy parameter training:} no for FABLE; it updates a small
+external execution policy around a frozen host agent.
+\textbf{Difference from us:} FABLE is the closest pure-online personalized
+agent baseline, but our target joins a historical LLM-policy initializer to
+later updates of that LLM policy.
+\end{settingpointer}
 
 \subsection{Learning an agent policy}
 
@@ -197,10 +348,26 @@ Personalized agents must choose tools, memory, clarifications, action order,
 and response style while still finishing the task.  PersonalWAB evaluates
 personalized web actions \citep{cai2025personalwab}; FingerTip 20K separates
 proactive suggestions from personalized mobile execution
-\citep{yang2026fingertip}; and FABLE explicitly separates execution choices
-from host-agent reasoning \citep{jin2026fable}.  These works expose why
-response preference alone is insufficient: the same final answer may hide a
-bad or unwanted trajectory.
+\citep{yang2026fingertip}; and pure-online FABLE separates an adaptive
+execution policy from frozen host-agent reasoning \citep{jin2026fable}.  These
+works expose why response preference alone is insufficient: the same final
+answer may hide a bad or unwanted trajectory.
+
+\begin{settingpointer}
+\textbf{Role:} Tier 1, method-defining.
+\textbf{One user:} partial; all model personal behavior, but only FABLE
+maintains a persistent online execution policy for the individual user.
+\textbf{Offline initialization:} present only in the offline
+training/evaluation line, not in FABLE.
+\textbf{Post-deployment online update:} yes only for FABLE.
+\textbf{Personalized agent:} yes.
+\textbf{LLM-policy parameter training:} not in the exact combination;
+PersonalWAB and FingerTip do not establish persistent post-deployment
+per-user updates, and FABLE updates a non-LLM controller.
+\textbf{Difference from us:} these works establish the agent setting and its
+evaluation, but not one LLM policy that crosses from personal history into
+continued same-user parameter training.
+\end{settingpointer}
 
 \paragraph{P9: assign credit from long, partially observed trajectories.}
 The user may provide one correction after many reasoning and tool steps.
@@ -208,6 +375,20 @@ Sparse task outcomes say whether the task ended well, but not which step
 expressed the user's preference.  WebRL addresses sparse terminal feedback
 and policy drift for web agents \citep{qi2025webrl}; our problem adds
 user-conditioned credit and delayed preference evidence.
+
+\begin{settingpointer}
+\textbf{Role:} Tier 1, method-defining.
+\textbf{One user:} no.
+\textbf{Offline initialization:} yes.
+\textbf{Post-deployment online update:} no; WebRL collects rollouts during a
+centralized training procedure.
+\textbf{Personalized agent:} no; it trains an LLM web agent without persistent
+user identity.
+\textbf{LLM-policy parameter training:} yes.
+\textbf{Difference from us:} WebRL supplies sparse-reward agent-learning
+machinery, but its credit is task-conditioned rather than user-conditioned
+and does not come from a deployed personal stream.
+\end{settingpointer}
 
 \subsection{Obtaining credible and affordable evidence}
 
@@ -222,14 +403,43 @@ accuracy itself may fail to predict downstream personalization quality
 \citep{rezk2025rmcrisis}.  A simulator can generate training experience; it
 cannot be the sole judge of a real-user claim.
 
+\begin{settingpointer}
+\textbf{Role:} Tier 4, optional scope.
+\textbf{One user:} no persistent target-user policy; simulators instantiate
+many users or personas for a shared system.
+\textbf{Offline initialization:} mixed and method-dependent.
+\textbf{Post-deployment online update:} no.
+\textbf{Personalized agent:} partial; several papers train or evaluate
+user-facing agents, but under simulated users.
+\textbf{LLM-policy parameter training:} mixed; these are primarily simulator,
+data, or training infrastructures rather than one common update algorithm.
+\textbf{Difference from us:} simulation can supply experience for our method,
+but cannot establish that one real user's deployed LLM policy improves.
+\end{settingpointer}
+
 \paragraph{P11: make per-user deployment cheaper than repeated large-model use.}
 Dedicated adapters create storage and serving overhead, while full online
 training adds accelerator cost.  OPPU motivates lightweight user ownership
 \citep{tan2024oppu}; CoSteer keeps context local while steering a cloud model
-\citep{lv2025costeer}; and FABLE moves adaptation into a small external policy
-\citep{jin2026fable}.  Our stronger efficiency question is whether a 4B, 7B,
-or 32B user policy can match or exceed a much larger generic model on
-user-conditioned utility at lower serving cost.
+\citep{lv2025costeer}; and pure-online FABLE moves adaptation into a small
+external execution policy \citep{jin2026fable}.  Our stronger efficiency
+question is whether a 4B, 7B, or 32B user policy can match or exceed a much
+larger generic model on user-conditioned utility at lower serving cost.
+
+\begin{settingpointer}
+\textbf{Role:} Tier 3, secondary claim.
+\textbf{One user:} yes; all three methods expose a user-specific component or
+context.
+\textbf{Offline initialization:} yes only for OPPU's learned per-user adapter.
+\textbf{Post-deployment online update:} yes only for pure-online FABLE.
+\textbf{Personalized agent:} yes only for FABLE.
+\textbf{LLM-policy parameter training:} yes only for offline OPPU; CoSteer is
+tuning-free decoding-time local delta steering, and FABLE trains an external
+execution policy rather than the host LLM.
+\textbf{Difference from us:} each method satisfies a different efficiency
+slice, but none trains a compact personal LLM first offline and then from its
+deployed agent experience.
+\end{settingpointer}
 
 \paragraph{P12: evaluate future behavior rather than history recall.}
 LongLaMP provides user-disjoint and chronological long-form tasks
@@ -239,6 +449,20 @@ gradual preference formation, temporal interference, and task completion
 \citep{liu2026perma}; PRISM supplies individualized human feedback
 \citep{kirk2024prism}.  These benchmarks show that retrieval accuracy is not
 the endpoint.  The endpoint is correct behavior on an untouched future task.
+
+\begin{settingpointer}
+\textbf{Role:} Tier 2, necessary support.
+\textbf{One user:} yes at the data or evaluation level.
+\textbf{Offline initialization:} not applicable; these are datasets and
+benchmarks.
+\textbf{Post-deployment online update:} no.
+\textbf{Personalized agent:} mixed; PERMA has an agent-oriented environment,
+while LongLaMP, PrefEval, and PRISM primarily supply text or preference
+evidence.
+\textbf{LLM-policy parameter training:} no method is supplied.
+\textbf{Difference from us:} these resources can test our policy, but they do
+not define the offline-to-online update algorithm.
+\end{settingpointer}
 
 \begin{table}[t]
   \centering
@@ -294,8 +518,8 @@ the endpoint.  The endpoint is correct behavior on an untouched future task.
 \begin{quote}
 \textbf{A compact, user-owned language-model policy can be initialized from
 one person's heterogeneous historical interactions and then improved from
-that person's later task evidence, with fewer online interactions than
-online-only learning, while preserving task success and safety.}
+that person's later agent-task evidence through real parameter updates, while
+preserving task success and safety.}
 \end{quote}
 
 This claim joins three pieces that prior work usually separates:
