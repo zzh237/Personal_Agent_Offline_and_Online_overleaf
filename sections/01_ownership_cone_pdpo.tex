@@ -1,0 +1,163 @@
+\section{Idea 1: Ownership-Cone Personalized DPO}
+\label{sec:ownership-cone}
+
+\subsection{Thesis and novelty boundary}
+
+A shared parameter update can change behavior for every user, while an update
+to $e_u$ affects only user $u$.  \method{Ownership-Cone P-DPO} matches each
+stability constraint to this ownership boundary: other-user replay constrains
+the shared block, and same-user replay constrains the active private block.
+
+\Inherited: the \prlhf\ parameterization and specific-plus-generic preference
+loss, DPO, LoRA, AdamW, replay, and gradient projection.
+
+\Proposed: project the \emph{actual AdamW displacement} in two separate
+ownership-scoped cones.  No global no-forgetting guarantee is claimed.  The
+constraint controls only the first-order change of the sampled replay losses.
+
+\begin{table}[t]
+  \centering
+  \caption{Algorithm papers supporting Ownership-Cone P-DPO.}
+  \label{tab:ownership-support}
+  \begin{tabularx}{\textwidth}{@{}L{0.24\textwidth}Y Y@{}}
+    \toprule
+    Supporting paper & Component used here & Missing component supplied by this proposal \\
+    \midrule
+    P-RLHF \citep{li2024personalized} &
+    Shared LoRA, generic embedding, user embeddings, and personalized DPO. &
+    It is offline and has no ownership-scoped online stability rule. \\
+    DPO, LoRA, AdamW \citep{rafailov2023dpo,hu2022lora,loshchilov2019adamw} &
+    Pairwise loss, parameter-efficient update space, and optimizer. &
+    They do not decide which users may constrain which parameter block. \\
+    GEM and A-GEM \citep{lopezpaz2017gem,chaudhry2019agem} &
+    Replay-gradient constraints and projection. &
+    Their task constraints do not distinguish shared from user-private
+    parameters or the displacement applied by AdamW. \\
+    CAGrad \citep{liu2021cagrad} &
+    Gradient-conflict control across objectives. &
+    It does not encode parameter ownership or chronological personalization. \\
+    FedPDPO \citep{zhu2026fedpdpo} &
+    Shared and personalized preference optimization. &
+    Its federated split does not provide the proposed deployed replay cones. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Step-by-step workflow}
+
+\begin{enumerate}
+  \item Train an immutable offline \prlhf\ parent $c_0$ and freeze
+  $\refpolicy$.
+  \item Collect preference pairs with the active checkpoint.  Reject pairs
+  without a comparator, user identity, behavior hash, and ranking provenance.
+  \item Insert eligible pairs into a replay buffer stratified by user, task,
+  time, and policy version.
+  \item Draw a current minibatch for user $u$, balanced other-user anchors for
+  shared parameters, and same-user anchors for $e_u$.
+  \item Advance AdamW moments functionally and form the candidate descent
+  displacements $d_s$ and $d_p$, including weight decay.
+  \item Project $d_s$ through cross-user constraints and $d_p$ through
+  same-user constraints.  Keep every $e_v$, $v\ne u$, frozen.
+  \item Apply a finite nonzero projected step and write its gradients,
+  optimizer state, active constraints, and projection angles to the receipt.
+  \item Hash and load the candidate in a clean worker.  Activate it only
+  through the gate in \cref{sec:activation-gate}; otherwise restore the parent.
+  \item Evaluate activated checkpoints on untouched future periods.  These
+  outcomes do not return to the reported training run.
+\end{enumerate}
+
+\subsection{Objective and projected update}
+
+For $z=(u,x,y^+,y^-)$ and conditioning embedding $e$, define
+\begin{align}
+  \Delta q_{\params}(z,e)
+  &=
+  \log\frac{\pi_{\params}(y^+\mid x,e)}
+            {\refpolicy(y^+\mid x,e)}
+  -
+  \log\frac{\pi_{\params}(y^-\mid x,e)}
+            {\refpolicy(y^-\mid x,e)}, \\
+  \ell_{\pdpo}(z;\params)
+  &=
+  -\log\sigma\!\left(\beta\Delta q_{\params}(z,e_u)\right)
+  -\lambda_g\log\sigma\!\left(\beta\Delta q_{\params}(z,e_0)\right).
+  \label{eq:ownership-pdpo}
+\end{align}
+Let $\shared=(\phi,e_0)$ and $\private=e_u$.  AdamW proposes descent
+displacements $d_s$ and $d_p$ from the current minibatch.  For cross-user
+shared anchors $A^s_j$ and same-user private anchors $A^p_k$, set
+\begin{equation}
+  a^s_j=\nabla_{\shared}\ell_{\pdpo}(A^s_j;\params),
+  \qquad
+  a^p_k=\nabla_{\private}\ell_{\pdpo}(A^p_k;\params).
+\end{equation}
+The two projections are
+\begin{align}
+  d_s^\star
+  &=
+  \arg\min_d \frac{1}{2}\norm{d-d_s}_2^2
+  &&\text{s.t.}\quad
+  (a^s_j)^\top d\ge -\epsilon^s_j/\eta
+  \quad \forall j, \label{eq:shared-cone}\\
+  d_p^\star
+  &=
+  \arg\min_d \frac{1}{2}\norm{d-d_p}_2^2
+  &&\text{s.t.}\quad
+  (a^p_k)^\top d\ge -\epsilon^p_k/\eta
+  \quad \forall k. \label{eq:private-cone}
+\end{align}
+Apply $\shared\leftarrow\shared-\eta d_s^\star$ and
+$e_u\leftarrow e_u-\eta d_p^\star$.  Since
+$\ell(\shared-\eta d)\approx\ell(\shared)-\eta a^\top d$, each constraint
+bounds the sampled anchor's first-order loss increase by $\epsilon$.  It says
+nothing about higher-order change, unobserved users, or future reward.
+
+\begin{algorithm}[t]
+  \caption{Ownership-Cone P-DPO}
+  \label{alg:ownership-cone}
+  \KwIn{Offline parent $c_0$; replay buffer $\buffer$; validation panel $V$;
+  budgets $B$; tolerances $\epsilon^s,\epsilon^p$}
+  \KwOut{Append-only sequence of activated checkpoints}
+  $c\leftarrow c_0$; freeze backbone and $\refpolicy$\;
+  \While{budget and patience remain}{
+    collect eligible pairs with behavior checkpoint $c$ and append to $\buffer$\;
+    sample active user $u$ and current minibatch $D_u$\;
+    sample balanced cross-user anchors $\anchors_s$ and same-user anchors $\anchors_p$\;
+    \For{$k=1,\ldots,K$}{
+      form actual AdamW displacements $(d_s,d_p)$ on $D_u$\;
+      $d_s^\star\leftarrow\operatorname{Project}(d_s,\anchors_s,\epsilon^s)$ using \cref{eq:shared-cone}\;
+      $d_p^\star\leftarrow\operatorname{Project}(d_p,\anchors_p,\epsilon^p)$ using \cref{eq:private-cone}\;
+      update only $(\phi,e_0,e_u)$; keep $e_v$ fixed for $v\ne u$\;
+      log optimizer moments, constraints, norms, and projection angles\;
+    }
+    save and hash candidate $\hat c$ with parent $c$\;
+    \eIf{$\hat c$ loads cleanly and passes $V$}{
+      activate $\hat c$; $c\leftarrow\hat c$\;
+    }{
+      restore parameters and optimizer state of $c$\;
+    }
+  }
+\end{algorithm}
+
+\subsection{Invariants, stopping, and tests}
+
+\begin{itemize}
+  \item Other-user anchors never constrain another user's private embedding.
+  Same-user anchors never stand in for shared cross-user protection.
+  \item A raw-gradient projection is a baseline, not an implementation of the
+  proposal; the projected object must be the applied AdamW displacement.
+  \item Every candidate has one parent, and failed candidates cannot seed data
+  or optimizer state.
+  \item Task success and personalization are gated and reported separately.
+\end{itemize}
+
+An adaptation window stops at its declared optimizer-step or token budget.
+The main attribution tests are unconstrained online \pdpo, one global cone,
+shared-only and private-only cones, ownership-swapped cones, and raw-gradient
+rather than AdamW-displacement projection.  Equal initialization, pairs,
+optimizer settings, trainable parameters, tokens, and validation gates are
+required across these controls.
+
+\Evidence.  This section specifies a testable algorithm.  It contains no
+measured result and does not imply that the cone is feasible, nonzero, or
+beneficial on the target stream.

@@ -1,0 +1,171 @@
+\section{Idea 3: Profile-Swap Policy Gradient}
+\label{sec:profile-swap}
+
+\subsection{Thesis and novelty boundary}
+
+A trajectory can receive high personalized reward because it is simply good
+for everyone.  \profileswap\ holds the realized trajectories fixed and changes
+only the profile used for scoring.  Its personalization advantage is the
+intended user's within-group rank minus the mean rank under matched alternative
+profiles.
+
+\Inherited: the personalized parameterization, grouped policy gradient, frozen
+profile scorers, rank normalization, LoRA, and AdamW.
+
+\Proposed: a cross-profile rank contrast on the \emph{same} trajectory group.
+It is an evaluative contrast, not a causal estimate of user identity.
+
+\begin{table}[t]
+  \centering
+  \caption{Algorithm papers supporting Profile-Swap Policy Gradient.}
+  \label{tab:profile-support}
+  \begin{tabularx}{\textwidth}{@{}L{0.24\textwidth}Y Y@{}}
+    \toprule
+    Supporting paper & Component used here & Missing component supplied by this proposal \\
+    \midrule
+    P-RLHF \citep{li2024personalized} &
+    Shared LoRA and user-conditioned embeddings learned from preferences. &
+    It has no chronological on-policy policy-gradient loop. \\
+    DeepSeekMath/GRPO \citep{shao2024deepseekmath} &
+    Group-relative advantages and clipped policy optimization. &
+    Group normalization does not separate intended-user value from broadly
+    useful behavior. \\
+    WebRL \citep{qi2025webrl} &
+    Online reinforcement learning for multi-turn language-model agents. &
+    It has no persistent cross-profile personalization contrast. \\
+    Reward factorization \citep{shenfeld2025reward} &
+    User-conditioned reward structure and low-dimensional preference
+    variation. &
+    It does not form an on-policy advantage by rescoring identical
+    trajectories under other users. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Step-by-step workflow}
+
+\begin{enumerate}
+  \item Train an offline \prlhf\ checkpoint and freeze the preference scorer
+  version used by the next adaptation window.
+  \item For user-task context $(u,x)$, generate $G=8$ trajectories with the
+  exact active checkpoint.
+  \item Before observing scores, sample $K=4$ alternative profiles matched on
+  task feasibility, permissions, language, and available evidence.
+  \item Score the same eight trajectories under $u$ and every alternative
+  profile.  Do not rerun the environment.
+  \item Convert each profile's scores into centered within-group ranks.
+  \item Subtract the alternative-profile mean rank from the intended-user
+  rank.  Separately standardize deterministic task success.
+  \item Combine the two advantages with a validation-selected coefficient and
+  execute one clipped on-policy AdamW update.
+  \item Hash, load, validate, activate, or roll back the candidate.
+  \item Evaluate future task success and personalization separately.
+\end{enumerate}
+
+\subsection{Profile-swap advantage}
+
+Let $h_\omega(v,x,\tau_i)$ be a frozen score for profile $v$.  For each
+$v\in\{u\}\cup C(u,x)$, rank the $G$ trajectories from least to most
+preferred, use average ranks for ties, and define
+\begin{equation}
+  q_{v,i}
+  =
+  \frac{2\rank_v(i)-G-1}{G-1}.
+  \label{eq:profile-rank}
+\end{equation}
+Thus $q_{v,i}\in[-1,1]$ and $\sum_iq_{v,i}=0$.  The profile-swap advantage is
+\begin{equation}
+  A^{\mathrm{swap}}_i
+  =
+  q_{u,i}
+  -
+  \frac{1}{K}\sum_{v\in C(u,x)}q_{v,i}.
+  \label{eq:swap-advantage}
+\end{equation}
+For deterministic task success $s_i$, define
+\begin{equation}
+  A^{\mathrm{task}}_i
+  =
+  \frac{s_i-\bar s}{\operatorname{sd}(s_1,\ldots,s_G)+10^{-6}},
+\end{equation}
+and set it to zero when the group variance is zero.  The training advantage is
+\begin{equation}
+  A_i
+  =
+  \clip(A^{\mathrm{task}}_i,-2,2)
+  +
+  \lambda\clip(A^{\mathrm{swap}}_i,-2,2),
+  \label{eq:profile-total-adv}
+\end{equation}
+where $\lambda$ is selected on offline validation and then frozen.
+
+If $\mu$ is the behavior policy and
+$\rho_{it}=\policy(a_{it}\mid h_{it},u)/\mu(a_{it}\mid h_{it},u)$, minimize
+\begin{equation}
+  \loss_{\mathrm{PSPG}}
+  =
+  -\expect_{i,t}\!\left[
+    \min\!\left\{
+      \rho_{it}A_i,\,
+      \clip(\rho_{it},1-\epsilon,1+\epsilon)A_i
+    \right\}
+  \right]
+  +
+  \beta\KL(\policy\Vert\pi_{\mathrm{parent}}).
+  \label{eq:profile-policy-loss}
+\end{equation}
+Ranks make the update invariant to a strictly monotone recalibration applied
+separately to each profile scorer.
+
+\begin{algorithm}[t]
+  \caption{Profile-Swap Policy Gradient}
+  \label{alg:profile-swap}
+  \KwIn{Parent $c_0$; frozen scorer $h_\omega$; panel sampler; $G,K,\lambda$;
+  validation panel $V$}
+  \KwOut{Activated personalized policy checkpoints}
+  $c\leftarrow c_0$\;
+  \While{budget and patience remain}{
+    sample eligible user-task context $(u,x)$\;
+    generate $\{\tau_i\}_{i=1}^{G}$ with active checkpoint $c$\;
+    sample matched alternative panel $C(u,x)$ before scoring\;
+    \ForEach{$v\in\{u\}\cup C(u,x)$}{
+      score the identical trajectories with $h_\omega(v,x,\cdot)$\;
+      compute centered ranks $q_{v,i}$ by \cref{eq:profile-rank}\;
+    }
+    compute $A_i^{\mathrm{swap}}$, $A_i^{\mathrm{task}}$, and $A_i$\;
+    consume the rollout group once in a clipped update on \cref{eq:profile-policy-loss}\;
+    update only $(\phi,e_0,e_u)$ and log scorer, panel, policy, and optimizer versions\;
+    save and hash candidate $\hat c$\;
+    \eIf{$\hat c$ loads and passes $V$}{
+      activate $\hat c$; $c\leftarrow\hat c$\;
+    }{
+      restore $c$ and its optimizer state\;
+    }
+  }
+\end{algorithm}
+
+\subsection{Invariants, stopping, and tests}
+
+\begin{itemize}
+  \item Every profile scores the same trajectory tokens; profile swapping
+  never changes environment execution.
+  \item Alternative profiles are sampled before scores are visible, and their
+  identities and propensities are recorded.
+  \item The scorer is frozen within an adaptation window and receives no
+  policy-training gradient.
+  \item Each rollout group is consumed for at most one optimizer epoch.
+  \item Task success, safety, and permissions are not counterfactually
+  swapped.
+\end{itemize}
+
+An adaptation window stops after 200 optimizer steps, 400 rollout groups, or
+its token ceiling.  Required controls include raw-reward GRPO, intended-profile
+rank only, user-history normalization, global normalization, same-profile
+duplicate panels, randomly permuted identities, and a compute-matched extra
+scoring baseline.  These tests distinguish identity contrast from rank
+normalization and additional scorer calls.
+
+\Evidence.  Cross-profile subtraction may remove generic quality, but it may
+also amplify scorer bias or penalize preferences shared by many users.  Only
+matched future evaluation can decide whether the resulting policy is more
+personalized without losing task competence.

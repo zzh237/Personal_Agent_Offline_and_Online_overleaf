@@ -1,0 +1,61 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=0.82in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,bm,mathtools}
+\usepackage{booktabs,tabularx,array}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{enumitem}
+\usepackage{natbib}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+\input{macros}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=MidnightBlue,
+  citecolor=ForestGreen,
+  urlcolor=BrickRed,
+  pdftitle={Five Algorithmic Workflows for Offline-to-Online Personalized LLM Training}
+}
+
+\title{\bfseries Five Algorithmic Workflows for\\
+Offline-to-Online Personalized LLM Training}
+\author{Technical Design Note}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note turns five research ideas into executable algorithm specifications.
+Each section gives the supporting papers, the inherited method boundary, a
+step-by-step workflow, a mathematical objective, pseudocode, invariants, and
+rollback conditions.  The common setting starts from an offline personalized
+policy and adapts a frozen-backbone language-model agent through shared LoRA
+parameters and user-conditioned embeddings.  The five proposals address
+ownership-aware stability, stale-trajectory reuse, user-specific policy
+advantages, temporal negative weighting, and active preference acquisition.
+They are designs for implementation and evaluation, not reports of completed
+experiments.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\input{sections/00_common_setup}
+\input{sections/01_ownership_cone_pdpo}
+\input{sections/02_support_handoff_replay}
+\input{sections/03_profile_swap_policy_gradient}
+\input{sections/04_tomorrows_mistake}
+\input{sections/05_checkpoint_fork_queries}
+
+\clearpage
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

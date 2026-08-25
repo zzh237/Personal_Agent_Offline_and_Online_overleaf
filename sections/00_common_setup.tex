@@ -1,0 +1,92 @@
+\section{Common Training Contract}
+\label{sec:common}
+
+\subsection{Scope and evidence}
+
+All five ideas begin with an offline personalized language-model policy and
+continue learning from chronological agent interactions.  The common policy
+state is
+\begin{equation}
+  \params = \bigl(\phi,e_0,\{e_u:u\in\users\}\bigr),
+  \label{eq:common-state}
+\end{equation}
+where the backbone is frozen, $\phi$ is a shared LoRA adapter, $e_0$ is a
+generic soft prompt, and $e_u$ is a private embedding for user $u$.
+This organization follows personalized RLHF and parameter-efficient
+fine-tuning \citep{li2024personalized,hu2022lora}.  Preference losses use DPO
+when a pairwise label is available \citep{rafailov2023dpo}; numerical updates
+use AdamW \citep{loshchilov2019adamw}.
+
+\Evidence.  The cited papers establish prior algorithms and motivate the
+proposed transformations.  They do not establish that any method in this note
+works.  Every improvement claim therefore remains a hypothesis until a
+checkpoint-changing run and untouched future evaluation have been completed.
+
+\subsection{Shared record and checkpoint schema}
+
+Every trainable record must identify the user and profile version, task and
+environment, generating model, behavior checkpoint, rendered state, actions
+and tool calls, outcome or preference provenance, timestamp, data split, and
+training eligibility.  Token log-probabilities and replayable state
+fingerprints are required when an algorithm uses them.  Missing fields cause
+quarantine; they are never silently reconstructed.
+
+Each candidate checkpoint belongs to an append-only directed acyclic graph.
+Its receipt contains the parent hash, adapter hash, optimizer-state hash,
+data-policy version, evaluation receipt, activation status, and rollback
+reason.  A rejected candidate cannot generate later data or donate optimizer
+moments.
+
+\subsection{Shared lifecycle}
+
+\begin{table}[t]
+  \centering
+  \caption{Lifecycle used by all five workflows.  The middle step changes by
+  idea; the provenance and activation steps do not.}
+  \label{tab:shared-lifecycle}
+  \begin{tabularx}{\textwidth}{@{}L{0.09\textwidth}Y Y@{}}
+    \toprule
+    Phase & Required action & Output \\
+    \midrule
+    Offline & Train the registered \prlhf\ or \agenticdpo\ parent on a
+    chronological historical split. & Immutable checkpoint $c_0$, fixed
+    reference policy, optimizer receipt. \\
+    Collect & Run only the active checkpoint in the declared environment and
+    validate every new record. & Versioned interaction ledger. \\
+    Adapt & Execute the idea-specific update without reading validation or
+    future-test evidence. & Candidate $c_{t+1}$ and complete update receipt. \\
+    Verify & Load $c_{t+1}$ in a fresh worker and compare it with $c_t$ on a
+    fixed validation panel. & Activation or rollback decision. \\
+    Evaluate & Test activated checkpoints on untouched future periods from
+    natural initial states. & Separate task-success and personalization
+    estimates. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Upper, middle, and lower algorithm layers}
+
+The \emph{upper layer} names the optimized object: the shared LoRA and
+user-conditioned parameters in \cref{eq:common-state}.  The \emph{middle
+layer} maps evidence to an update, such as preference optimization, replay,
+policy gradient, bilevel weighting, or active acquisition.  The \emph{lower
+layer} provides loops, buffers, projections, checkpointing, and stopping
+rules.  A method is credited only for the layer it changes.  Standard
+minibatching, AdamW, replay storage, and checkpoint hashing remain
+infrastructure.
+
+\subsection{Common activation gate}
+\label{sec:activation-gate}
+
+A candidate may become active only if all of the following hold:
+\begin{enumerate}
+  \item its adapter and optimizer hashes load in a clean worker;
+  \item the update is finite and nonzero;
+  \item task success and safety are non-inferior on the fixed validation panel;
+  \item the declared personalization validation statistic improves;
+  \item no protected provenance or future-test boundary was crossed.
+\end{enumerate}
+Failure restores both parent parameters and parent optimizer state.  Runs stop
+when their fixed interaction, token, optimizer-step, GPU, or wall-clock budget
+is exhausted; after three consecutive windows without an activated candidate;
+or at a preregistered safety termination.

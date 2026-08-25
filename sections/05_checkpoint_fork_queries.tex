@@ -1,0 +1,202 @@
+\section{Idea 5: Checkpoint-Fork Querying}
+\label{sec:checkpoint-fork}
+
+\subsection{Thesis and novelty boundary}
+
+An uncertain label is not necessarily useful: either answer may induce nearly
+the same policy.  \forkquery\ asks for feedback only when the two possible
+labels produce virtual one-step checkpoints with different behavior on
+user-relevant probe states.
+
+\Inherited: \prlhf\ and \pdpo, active preference collection, AdamW, LoRA,
+Jensen--Shannon divergence, and information-gain acquisition.
+
+\Proposed: score a query in \emph{behavior space} after both exact
+label-conditioned optimizer branches, then commit only the observed branch.
+The finite probe score is not a guarantee of downstream utility.
+
+\begin{table}[t]
+  \centering
+  \caption{Algorithm papers supporting Checkpoint-Fork Querying.}
+  \label{tab:fork-support}
+  \begin{tabularx}{\textwidth}{@{}L{0.24\textwidth}Y Y@{}}
+    \toprule
+    Supporting paper & Component used here & Missing component supplied by this proposal \\
+    \midrule
+    P-RLHF \citep{li2024personalized} &
+    Personalized DPO loss and shared/private parameterization. &
+    It trains a fixed preference set and never allocates live queries. \\
+    SELM \citep{zhang2024selm} &
+    Active exploration for online language-model alignment. &
+    It does not value both labels by the behavior of their resulting
+    checkpoints. \\
+    Hybrid Preference Optimization \citep{bose2024hybrid} &
+    Joint use of offline preference data and online queries. &
+    It does not define a decision-focused per-query acquisition score. \\
+    SPRInG \citep{kim2026spring} &
+    Selective updates under continual personalization. &
+    Likelihood novelty does not test whether two labels change future actions. \\
+    Information-gain acquisition \citep{mackay1992information} &
+    Select data by expected reduction of decision uncertainty. &
+    Classical information gain does not include a functional LLM optimizer
+    branch or agent action probes. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Step-by-step workflow}
+
+\begin{enumerate}
+  \item Train and load an immutable offline \prlhf\ parent.
+  \item In each user window, generate a fixed pool of same-task live trajectory
+  pairs with the exact active checkpoint.
+  \item Keep only pairs matched on deterministic task success and safety, so
+  the requested label targets personalization rather than obvious correctness.
+  \item Before scoring the pool, freeze one anchor minibatch, user-relevant
+  probe states, and schema-valid action slates.
+  \item For each candidate and each possible label, clone the parent adapter
+  and AdamW state functionally and execute the exact one-step \pdpo\ update.
+  \item Evaluate both virtual checkpoints on every fixed action slate.
+  \item Compute the label-prior-weighted Jensen--Shannon divergence between
+  their action distributions and choose the largest fork.
+  \item Abstain if the maximum score is below the calibrated threshold.
+  Otherwise request one label and execute only its branch as a real update from
+  the unchanged parent.
+  \item Hash, load, validate, activate, or roll back the real candidate.  All
+  virtual branches and unqueried labels expire.
+\end{enumerate}
+
+\subsection{Virtual branches and fork score}
+
+For candidate pair $q=(u,x,y^A,y^B)$, define
+\begin{equation}
+  d_{\params,e}(q)
+  =
+  \log\frac{\pi_{\params}(y^A\mid x,e)}
+            {\refpolicy(y^A\mid x,e)}
+  -
+  \log\frac{\pi_{\params}(y^B\mid x,e)}
+            {\refpolicy(y^B\mid x,e)}.
+\end{equation}
+For hypothetical label $z\in\{+1,-1\}$, where $+1$ prefers $y^A$, use
+\begin{equation}
+  \ell_z(q;\params)
+  =
+  -\log\sigma\!\left(\beta z d_{\params,e_u}(q)\right)
+  -
+  \lambda_g\log\sigma\!\left(\beta z d_{\params,e_0}(q)\right).
+  \label{eq:fork-pdpo}
+\end{equation}
+Freeze a seven-pair eligible anchor minibatch $H_t$ for the whole acquisition
+window and set
+\begin{equation}
+  \loss_{q,z}
+  =
+  \frac{1}{8}\left[
+    \ell_z(q;\params)+\sum_{h\in H_t}\ell(h;\params)
+  \right].
+\end{equation}
+From the same parent parameters and AdamW state $(m,v,r)$, each hypothetical
+branch computes
+\begin{align}
+  g_{q,z} &= \nabla_{\params}\loss_{q,z}, \\
+  m'_{q,z} &= \beta_1m+(1-\beta_1)g_{q,z}, \\
+  v'_{q,z} &= \beta_2v+(1-\beta_2)g_{q,z}^2, \\
+  \widetilde\params_{q,z}
+  &=
+  \params-\alpha\left[
+    \frac{\widehat m'_{q,z}}{\sqrt{\widehat v'_{q,z}}+\varepsilon}
+    +\lambda_{\mathrm{wd}}\params
+  \right].
+  \label{eq:fork-branch}
+\end{align}
+
+For each of $R=8$ training-side probe states $s_r$, fix a slate
+$A_r=\{a_{r1},\ldots,a_{rK}\}$ of $K=4$ valid actions.  The branch
+distribution is
+\begin{equation}
+  P_{q,z,r}(j)
+  =
+  \softmax_j\!\left(
+    |a_{rj}|^{-1}
+    \log\pi_{\widetilde\params_{q,z}}(a_{rj}\mid s_r,e_u)
+  \right).
+\end{equation}
+Calibrate the label prior $p_q=\sigma(d_{\params,e_u}(q)/T_c)$ only on
+eligible historical labels, and let
+$M_{q,r}=p_qP_{q,+,r}+(1-p_q)P_{q,-,r}$.  The acquisition score is
+\begin{equation}
+  F(q)
+  =
+  \frac{1}{R}\sum_{r=1}^{R}
+  \left[
+    p_q\KL(P_{q,+,r}\Vert M_{q,r})
+    +(1-p_q)\KL(P_{q,-,r}\Vert M_{q,r})
+  \right].
+  \label{eq:fork-score}
+\end{equation}
+This is the mutual information between the binary label and the finite action
+slate under the approximation above.
+
+\begin{algorithm}[t]
+  \caption{Checkpoint-Fork Querying}
+  \label{alg:checkpoint-fork}
+  \KwIn{Parent $c_0$; candidate-pool size $M$; anchors $H_t$; probes and
+  slates; threshold $\delta$; validation panel $V$}
+  \KwOut{Queried labels, abstentions, and activated checkpoints}
+  $c\leftarrow c_0$\;
+  \While{label budget, compute budget, and patience remain}{
+    collect $M$ same-task live pairs with active checkpoint $c$\;
+    filter to matched task-success and safety status\;
+    freeze $H_t$, probes, slates, and calibrated label priors\;
+    \ForEach{candidate $q$}{
+      \ForEach{$z\in\{-1,+1\}$}{
+        clone the same parent adapter and AdamW state functionally\;
+        compute virtual branch $\widetilde\params_{q,z}$ by \cref{eq:fork-branch}\;
+        evaluate fixed action slates and discard the virtual state\;
+      }
+      compute $F(q)$ by \cref{eq:fork-score}\;
+    }
+    $q^\star\leftarrow\arg\max_qF(q)$\;
+    \eIf{$F(q^\star)<\delta$}{
+      record an abstention; expire the pool\;
+    }{
+      request label $z^\star$ only for $q^\star$\;
+      from the unchanged parent, take one real AdamW step on $\loss_{q^\star,z^\star}$\;
+      save and hash candidate $\hat c$\;
+      \eIf{$\hat c$ loads and passes $V$}{
+        activate $\hat c$; $c\leftarrow\hat c$\;
+      }{
+        restore $c$ and its optimizer state\;
+      }
+    }
+  }
+\end{algorithm}
+
+\subsection{Invariants, stopping, and tests}
+
+\begin{itemize}
+  \item Both virtual labels start from the same parent parameters, moments,
+  anchors, probes, learning rate, and weight decay.
+  \item Virtual branches leave persistent parameters and moments bitwise
+  unchanged and can never be activated.
+  \item Labels remain hidden until a candidate has been selected and its query
+  receipt written.
+  \item Probe states come from eligible training-side history, never validation
+  or untouched future tasks.
+  \item Every acquisition baseline sees the same pool, hidden labels, feedback
+  budget, and real-update implementation.
+\end{itemize}
+
+A user window stops after one query and real update, an abstention, or its
+rollout/token ceiling.  Required acquisition baselines are random selection,
+label entropy, SPRInG-style novelty, expected gradient norm, expected model
+change, and a compute-matched sham that executes both branches and probes but
+selects randomly.  Parameter-space fork distance and first-order logit
+approximations test whether full behavior-space simulation is necessary.
+
+\Evidence.  The method may spend substantial compute to avoid a single weak
+label, and its score depends on probe coverage and prior calibration.  The
+primary empirical question is personalization per acquired label and per
+activated update, with task success, safety, and total GPU cost reported
+separately.

@@ -1,0 +1,190 @@
+\section{Idea 2: Support-Handoff Replay}
+\label{sec:support-handoff}
+
+\subsection{Thesis and novelty boundary}
+
+A historical action may become unusable for off-policy learning even when the
+state it reached remains useful.  \shorthand\ therefore gives each trajectory
+a monotone replay status:
+\[
+  \code{action\_alive}\longrightarrow\code{state\_only}
+  \longrightarrow\code{quarantined}.
+\]
+Supported trajectories contribute importance-weighted action gradients.  Once
+support collapses, their actions expire permanently; a verified historical
+state may still seed a fresh current-policy continuation.
+
+\Inherited: \prlhf\ initialization, off-policy weights, effective sample size
+(ESS), replay buffers, state resets, LoRA, and AdamW.
+
+\Proposed: the irreversible action-to-state handoff and its rule that expired
+action tokens can never contribute another gradient.
+
+\begin{table}[t]
+  \centering
+  \caption{Algorithm papers supporting Support-Handoff Replay.}
+  \label{tab:handoff-support}
+  \begin{tabularx}{\textwidth}{@{}L{0.24\textwidth}Y Y@{}}
+    \toprule
+    Supporting paper & Component used here & Missing component supplied by this proposal \\
+    \midrule
+    P-RLHF \citep{li2024personalized} &
+    Offline personalized initialization and trainable parameter blocks. &
+    No deployed trajectory-replay loop. \\
+    WebRL \citep{qi2025webrl} &
+    Online agent RL and replay of useful experience. &
+    It does not preserve an expired trajectory solely as an executable state. \\
+    VCPO \citep{huang2026stable} &
+    ESS as a diagnostic for stale off-policy updates. &
+    It stabilizes weighted updates; it does not switch representation from
+    action to state. \\
+    Balanced Replay \citep{lee2021offlinetoonline} &
+    Controlled mixing during offline-to-online transition. &
+    It retains or balances samples rather than terminating their action
+    eligibility. \\
+    Offline/online LLM RL \citep{lanchantin2025bridging} &
+    Evidence that synchronization and online data change LLM post-training. &
+    It does not define reconstructible state continuation for personalized
+    agents. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Step-by-step workflow}
+
+\begin{enumerate}
+  \item Train and hash an offline \prlhf\ checkpoint.
+  \item Store each live trajectory twice: an action payload with behavior
+  log-probabilities and a state payload with tool-boundary fingerprints.
+  \item Group action-alive records by behavior checkpoint and compatible
+  reward semantics.
+  \item Recompute current-policy log-probabilities and normalized ESS for each
+  sampled cohort.
+  \item If ESS remains above the fixed threshold, form a clipped,
+  self-normalized action-replay loss.
+  \item On the first ESS failure, atomically mark the cohort
+  \code{state\_only}.  Missing behavior log-probabilities cause the same
+  transition.
+  \item For a state-only record, replay a sampled prefix in a clean sandbox.
+  Continue only if its canonical fingerprint exactly matches the ledger.
+  \item Generate fresh suffixes with the active checkpoint and train only on
+  suffix tokens using newly verified outcomes.
+  \item Mix the available action and state losses, execute AdamW, then apply
+  the common candidate-load, activation, and rollback gate.
+\end{enumerate}
+
+\subsection{Support test and losses}
+
+For a behavior cohort $C$ of size $n$, define clipped ratios
+\begin{equation}
+  w_i
+  =
+  \exp\!\left[
+    \clip\!\left(
+      \log\policy(\tau_i\mid u_i)-\log\mu_i(\tau_i\mid u_i),
+      -\log 10,\log 10
+    \right)
+  \right]
+\end{equation}
+and normalized ESS
+\begin{equation}
+  \eta_C
+  =
+  \frac{\left(\sum_{i\in C}w_i\right)^2}
+       {n\sum_{i\in C}w_i^2}.
+  \label{eq:handoff-ess}
+\end{equation}
+Use action replay only when $n\ge 8$, $\eta_C\ge\kappa$ with
+$\kappa=0.5$, and reward semantics remain compatible.  With
+$\bar w_i=w_i/\sum_jw_j$ treated as stop-gradient and $A_i$ a return centered
+within user-task strata,
+\begin{equation}
+  \loss_A
+  =
+  -\sum_{i\in C}\bar w_i A_i
+    \sum_{j\in\tau_i}
+    \log\policy(a_{ij}\mid h_{ij},e_{u_i}).
+  \label{eq:action-replay}
+\end{equation}
+
+For a state-only trajectory, sample a verified boundary $s_{ik}$, reconstruct
+it, and draw $G=4$ fresh suffixes $\xi_{ig}\sim\policy(\cdot\mid s_{ik},e_u)$.
+Using leave-one-out advantages $\widetilde A_{ig}$ from newly verified
+rewards,
+\begin{equation}
+  \loss_S
+  =
+  -\frac{1}{G}\sum_{g=1}^{G}\widetilde A_{ig}
+  \sum_{j\in\xi_{ig}}
+  \log\policy(a_{igj}\mid h_{igj},e_u).
+  \label{eq:state-replay}
+\end{equation}
+The update minimizes
+\begin{equation}
+  \loss
+  =
+  \frac{1}{2}\loss_A+\frac{1}{2}\loss_S
+  +\beta\KL(\policy\Vert\pi_{\mathrm{parent}}),
+  \label{eq:handoff-loss}
+\end{equation}
+renormalizing over the modes available in the minibatch.  The clipped,
+self-normalized action estimator is biased by design.
+
+\begin{algorithm}[t]
+  \caption{Support-Handoff Replay}
+  \label{alg:support-handoff}
+  \KwIn{Parent $c_0$; dual-payload ledger $\buffer$; threshold $\kappa$;
+  suffix count $G$; validation panel $V$}
+  \KwOut{Activated checkpoints and monotone replay statuses}
+  $c\leftarrow c_0$\;
+  \While{budget and patience remain}{
+    collect trajectories with $c$; validate action and state payloads\;
+    sample behavior cohorts $\{C\}$ from $\buffer$\;
+    $\loss_A\leftarrow 0$; $\loss_S\leftarrow 0$\;
+    \ForEach{cohort $C$}{
+      compute $\eta_C$ by \cref{eq:handoff-ess}\;
+      \eIf{$C$ is \code{action\_alive}, $\eta_C\ge\kappa$, and rewards are compatible}{
+        add the loss in \cref{eq:action-replay} to $\loss_A$\;
+      }{
+        mark $C$ \code{state\_only} permanently\;
+        sample a tool boundary and reconstruct it in a clean sandbox\;
+        \eIf{the canonical fingerprint matches}{
+          generate $G$ suffixes with $c$ and add \cref{eq:state-replay} to $\loss_S$\;
+        }{
+          mark the record \code{quarantined}\;
+        }
+      }
+    }
+    take one clipped AdamW step on the available terms of \cref{eq:handoff-loss}\;
+    save and hash candidate $\hat c$\;
+    \eIf{$\hat c$ loads and passes $V$}{
+      activate $\hat c$; $c\leftarrow\hat c$\;
+    }{
+      restore $c$ and its optimizer state\;
+    }
+  }
+\end{algorithm}
+
+\subsection{Invariants, stopping, and tests}
+
+\begin{itemize}
+  \item Replay status is monotone.  A state-only cohort never returns to action
+  replay, even if a later policy raises its apparent ESS.
+  \item An expired prefix receives no gradient.  Only fresh suffix tokens can
+  train the policy after handoff.
+  \item State replay requires a clean-sandbox reconstruction and exact
+  canonical fingerprint.  Failure means quarantine, not approximate reuse.
+  \item Evaluation always starts from natural task initial states, never from a
+  privileged replay boundary.
+\end{itemize}
+
+An adaptation window stops after 200 optimizer steps, 500 fresh suffixes, or
+its token ceiling.  The necessary controls are fresh-only learning, a fixed
+offline/online replay mixture, ESS-based discard, ESS learning-rate scaling,
+always-action replay, always-state replay, and a compute-matched sham handoff.
+All controls receive the same ledger, reward semantics, suffix budget, and
+optimizer implementation.
+
+\Evidence.  The state adapter, reconstruction contract, and learner remain to
+be implemented.  Repository readiness or a valid fingerprint alone does not
+show that handoff improves either personalization or task success.

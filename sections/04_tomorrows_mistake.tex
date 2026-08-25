@@ -1,0 +1,178 @@
+\section{Idea 4: Tomorrow's Mistake}
+\label{sec:tomorrows-mistake}
+
+\subsection{Thesis and novelty boundary}
+
+\agenticdpo\ contrasts an accepted action with a plausible same-state mistake.
+The hardest current mistake, however, may teach little about the user's next
+tasks.  \tomorrow\ weights current mistakes by a one-step estimate of forward
+transfer: would correcting this mistake reduce loss on the same user's next
+already-observed interaction block?
+
+\Inherited: \agenticdpo's state-level preference loss, SFT anchor, schema
+preservation, and negative refresh; \prlhf's user-conditioned parameters;
+bilevel differentiation; and AdamW.
+
+\Proposed: chronological support/query blocks and a virtual optimizer step
+that assigns weight to each current negative according to next-block transfer.
+The one-step hypergradient is local and does not guarantee future reward.
+
+\begin{table}[t]
+  \centering
+  \caption{Algorithm papers supporting Tomorrow's Mistake.}
+  \label{tab:tomorrow-support}
+  \begin{tabularx}{\textwidth}{@{}L{0.24\textwidth}Y Y@{}}
+    \toprule
+    Supporting paper & Component used here & Missing component supplied by this proposal \\
+    \midrule
+    Agentic-DPO \citep{chen2026agenticdpo} &
+    Same-state action preferences, current-policy negatives, SFT anchoring,
+    and schema-preserving views. &
+    Its hardest-negative rule is offline, non-personalized, and myopic. \\
+    P-RLHF \citep{li2024personalized} &
+    Shared and user-private parameterization. &
+    It has no action-level negative refresh or temporal meta-weighting. \\
+    Example reweighting \citep{ren2018learning} &
+    A virtual update that scores training examples by a later objective. &
+    The query set is generic validation data rather than the same user's next
+    chronological interaction block. \\
+    Bilevel optimization \citep{franceschi2018bilevel} &
+    Differentiation through an inner optimization step. &
+    It does not specify agent mistakes, preference losses, or online user
+    chronology. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{Step-by-step workflow}
+
+\begin{enumerate}
+  \item Run the \agenticdpo\ SFT warm-up, freeze its reference policy, and
+  initialize the shared LoRA and user embeddings from offline history.
+  \item Partition each user's eligible stream into immutable consecutive
+  blocks $B(u,1),B(u,2),\ldots$.
+  \item Use $S=B(u,t-1)$ as support and $Q=B(u,t)$ as the meta-query.  Both
+  must be observed before the update; $Q$ is not validation or test data.
+  \item At every accepted state in $S$ and $Q$, sample four one-step actions
+  from the active checkpoint.  Remove duplicates, schema violations, and
+  ineligible negatives.
+  \item Assign transient logits to support negatives and take one
+  differentiable functional AdamW step on their weighted loss.
+  \item Evaluate the inherited \agenticdpo\ loss on $Q$ through the virtual
+  parameters, and differentiate it with respect to the support logits.
+  \item Convert the negative hypergradient into within-state weights.  Delete
+  the virtual parameters and moments.
+  \item From the original parent state, execute one real weighted
+  \agenticdpo\ AdamW step.
+  \item Hash, load, validate, activate, or roll back the candidate.  If
+  activated, move $Q$ into the support role for the next block.
+\end{enumerate}
+
+\subsection{Temporal bilevel objective}
+
+At support state $s_i$, let $a_i^+$ be the accepted action and
+$a_{ik}^-$, $k=1,\ldots,K$, be fresh schema-valid negatives.  Let
+$\ell_{\mathrm{ADPO}}(i,k;\params)$ denote the inherited anchored,
+action-level \agenticdpo\ loss.  Introduce transient logits
+$c_i\in\R^K$ and weights
+\begin{equation}
+  w_{ik}(c_i)=\softmax(c_i/\tau)_k.
+\end{equation}
+The weighted support loss is
+\begin{equation}
+  \loss_S(\params,c)
+  =
+  \frac{1}{|S|}
+  \sum_{i\in S}\sum_{k=1}^{K}
+  w_{ik}(c_i)\ell_{\mathrm{ADPO}}(i,k;\params).
+  \label{eq:tomorrow-support}
+\end{equation}
+
+Let the current AdamW state be $o=(m,v,r)$.  A functional step computes
+\begin{align}
+  g(c) &= \nabla_{\params}\loss_S(\params,c), \\
+  m'(c) &= \beta_1m+(1-\beta_1)g(c), \\
+  v'(c) &= \beta_2v+(1-\beta_2)g(c)^2, \\
+  \widetilde\params(c)
+  &=
+  \params-\alpha\left[
+    \frac{\widehat m'(c)}{\sqrt{\widehat v'(c)}+\varepsilon}
+    +\lambda_{\mathrm{wd}}\params
+  \right].
+  \label{eq:tomorrow-virtual}
+\end{align}
+Using uniform query-negative weights, define
+\begin{equation}
+  J(c)
+  =
+  \frac{1}{|Q|K}
+  \sum_{q\in Q}\sum_{k=1}^{K}
+  \ell_{\mathrm{ADPO}}\!\left(q,k;\widetilde\params(c)\right).
+  \label{eq:tomorrow-query}
+\end{equation}
+Starting from $c=0$, take one meta step,
+\begin{equation}
+  c^\star=-\eta_{\mathrm{meta}}\nabla_cJ(c)\big|_{c=0},
+  \qquad
+  w^\star_{ik}=\softmax(c_i^\star/\tau)_k.
+  \label{eq:tomorrow-weights}
+\end{equation}
+Then discard $\widetilde\params,m',v'$, stop gradients through $w^\star$, and
+take one real AdamW step on $\loss_S(\params,w^\star)$ from the unmodified
+parent state.
+
+\begin{algorithm}[t]
+  \caption{Tomorrow's Mistake temporal meta-weighting}
+  \label{alg:tomorrows-mistake}
+  \KwIn{Parent $c_0$; ordered user blocks; negatives per state $K$;
+  meta rate $\eta_{\mathrm{meta}}$; validation panel $V$}
+  \KwOut{Activated checkpoints and negative-weight receipts}
+  $c\leftarrow c_0$\;
+  \While{budget and patience remain}{
+    choose user $u$ with adjacent eligible blocks $S=B(u,t-1)$ and $Q=B(u,t)$\;
+    \If{$S$ or $Q$ lacks the minimum eligible states}{buffer evidence and continue}
+    generate $K$ valid same-state negatives in $S$ and $Q$ with checkpoint $c$\;
+    initialize support logits $c_i\leftarrow 0$\;
+    clone adapter and AdamW state functionally\;
+    compute virtual parameters $\widetilde\params(c_i)$ by \cref{eq:tomorrow-virtual}\;
+    evaluate $J(c)$ on $Q$ and compute $c^\star$ by \cref{eq:tomorrow-weights}\;
+    delete every virtual parameter and moment; restore the bitwise parent state\;
+    stop gradients through $w^\star$ and take one real weighted update on $S$\;
+    log block, negative-generator, hypergradient, optimizer, and policy hashes\;
+    save and hash candidate $\hat c$\;
+    \eIf{$\hat c$ loads and passes $V$}{
+      activate $\hat c$; $c\leftarrow\hat c$; advance the block pair\;
+    }{
+      restore $c$ and its optimizer state\;
+    }
+  }
+\end{algorithm}
+
+\subsection{Invariants, stopping, and tests}
+
+\begin{itemize}
+  \item Support and meta-query blocks belong to the same authenticated user and
+  adjacent ordered periods.  Future blocks cannot be backfilled.
+  \item Virtual checkpoints are ephemeral, bitwise isolated, and never
+  activatable.
+  \item The query block is training evidence already observed before the
+  update.  It is disjoint from checkpoint-selection validation and untouched
+  future evaluation.
+  \item Every negative records its generating checkpoint and is consumed in
+  one real update window.
+  \item A rejected real candidate supplies neither future rollouts nor AdamW
+  moments.
+\end{itemize}
+
+Skip a user update when either block has fewer than 16 eligible action states
+or no valid negative.  Stop a window after 150 real optimizer steps, 300
+negative-generation batches, or its token ceiling.  Controls must include
+unmodified \agenticdpo, personalized hardest-negative \agenticdpo, uniform
+negative weights, generic validation reweighting, temporally shuffled
+same-user queries, other-user queries, and a sham method that pays for the
+virtual pass but applies the parent rule.
+
+\Evidence.  A low next-block loss after one virtual step is only a local
+compatibility signal.  The experiment must test whether that signal predicts
+future personalization and task success, and whether its extra differentiation
+cost is justified.
