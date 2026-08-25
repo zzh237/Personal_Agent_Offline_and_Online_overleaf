@@ -1,0 +1,50 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=0.82in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,bm,mathtools}
+\usepackage{booktabs,tabularx,array}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{enumitem}
+\usepackage{natbib}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+\input{macros}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=MidnightBlue,
+  citecolor=ForestGreen,
+  urlcolor=BrickRed,
+  pdftitle={OPPU and SPRInG: The Two Closest Per-User Training Methods}
+}
+
+\title{\bfseries OPPU and SPRInG:\\
+The Two Closest Per-User Training Methods}
+\author{Technical Deep Dive}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We seek one policy per user, trained first from that user's thoughts,
+conversations, and task history, then updated from later interactions.  OPPU
+is the closest offline method: it fits one private adapter from one user's
+history.  SPRInG is the closest continual method: it updates that adapter from
+chronological interaction batches and retains a bounded personal memory.  This
+note specifies their workflows, objectives, data models, inputs, outputs, and
+the exact point where our agent-learning problem begins.
+\end{abstract}
+
+\input{sections/06_closest_per_user_prior_work}
+
+\clearpage
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

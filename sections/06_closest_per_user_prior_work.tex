@@ -1,0 +1,289 @@
+\section{The Two Closest Per-User Training Methods}
+\label{sec:closest-per-user}
+
+\subsection{What counts as a close match}
+
+Our unit of personalization is one user.  A deployment run owns that user's
+adapter, optimizer state, memory, and checkpoint history.  The initial policy
+is trained from the user's thoughts, conversations, corrections, and task
+records.  Later interactions update the same policy.  A shared backbone may
+be trained separately, but the target user's raw history does not train
+another user's deployed branch.
+
+Under this definition, the two closest papers are OPPU
+\citep{tan2024oppu} and SPRInG \citep{kim2026spring}.  OPPU is the closest
+offline initializer: it trains one adapter from one user's history.  SPRInG
+is the closest continual method: it carries that user's adapter forward and
+updates it from chronological interaction batches.  Together they bracket
+our offline-to-online workflow.
+
+\begin{table}[t]
+  \centering
+  \caption{Why OPPU and SPRInG are the closest matches.}
+  \label{tab:closest-match}
+  \begin{tabularx}{\textwidth}{@{}L{0.18\textwidth}YYY@{}}
+    \toprule
+    Property & OPPU & SPRInG & Our setting \\
+    \midrule
+    Policy owner &
+    One PEFT module per user &
+    One evolving LoRA adapter per user &
+    One user-owned policy branch \\
+    Historical input &
+    Paired behaviors or plain text &
+    Ordered query--response records &
+    Thoughts, conversations, task trajectories, and outcomes \\
+    Offline update &
+    Cross-entropy or next-token training &
+    Pretrained period-0 adapter &
+    User-history initialization \\
+    Later update &
+    None &
+    Selective SFT on each new period &
+    Preference or outcome-driven online update \\
+    Persistent output &
+    Personal adapter &
+    Adapter lineage and bounded memory &
+    Adapter, optimizer state, memory, and audit receipt \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+We exclude methods that train one policy across many users and personalize
+only through a profile or prompt.  They do not produce the user-owned policy
+studied here.
+
+\subsection{OPPU: one history, one adapter}
+
+\paragraph{Model and data.}
+OPPU freezes a task-adapted base model with parameters $\theta$ and assigns
+user $u$ a private PEFT module $\Delta\theta_u$.  The deployed model is
+\begin{equation}
+  M_u = M_{\theta\oplus\Delta\theta_u}.
+  \label{eq:oppu-model}
+\end{equation}
+The user's history $H_u^{<t}$ contains only records observed before the
+current query.  A record is either a supervised pair $(x_i,y_i)$ or a plain
+text sequence $x_i$.  The first form covers prior requests and accepted
+responses.  The second can hold notes, conversation text, or other
+user-authored material.
+
+\paragraph{Workflow.}
+\begin{enumerate}
+  \item Adapt a shared base model to the task using users outside the target
+  cohort, then merge the task LoRA into the base.
+  \item Freeze the shared base.
+  \item Initialize one LoRA module $\Delta\theta_u$ for the target user.
+  \item Train it only on $H_u$.  When retrieval is enabled, each example may
+  retrieve only records that preceded that example.
+  \item Save $\Delta\theta_u$.  At inference, load the frozen base and this
+  user's adapter, then answer the new query.
+\end{enumerate}
+
+\paragraph{Optimization.}
+For paired history, OPPU minimizes conditional cross-entropy:
+\begin{equation}
+  \loss_{\mathrm{pair}}(\Delta\theta_u)
+  =
+  -\sum_{(x_i,y_i)\in H_u}
+   \sum_{j=1}^{|y_i|}
+   \log p_{\theta,\Delta\theta_u}
+   \left(y_{i,j}\mid \varphi(x_i),y_{i,<j}\right).
+  \label{eq:oppu-paired}
+\end{equation}
+When history contains plain text only, the target is the next token:
+\begin{equation}
+  \loss_{\mathrm{text}}(\Delta\theta_u)
+  =
+  -\sum_{x_i\in H_u}
+   \sum_{j=1}^{|x_i|}
+   \log p_{\theta,\Delta\theta_u}
+   \left(x_{i,j}\mid x_{i,<j}\right).
+  \label{eq:oppu-text}
+\end{equation}
+The paper uses rank-8 LoRA on the query and value projections, learning rate
+$10^{-5}$, and two or three fixed epochs.  It does not report an online
+update, replay rule, rollback rule, or optimizer-state lifecycle.
+
+\begin{algorithm}[t]
+  \caption{OPPU for one user}
+  \label{alg:oppu-one-user}
+  \KwIn{Frozen task model $M_\theta$; chronological user history $H_u$;
+  optional retriever $R$}
+  \KwOut{Personal adapter $\Delta\theta_u$}
+  initialize $\Delta\theta_u$\;
+  \ForEach{record $h_i\in H_u$ in chronological order}{
+    construct its target from $(x_i,y_i)$ or right-shifted text $x_i$\;
+    if retrieval is enabled, retrieve only from $H_u^{<i}$\;
+    accumulate the loss in \cref{eq:oppu-paired} or \cref{eq:oppu-text}\;
+  }
+  update only $\Delta\theta_u$ for a fixed number of epochs\;
+  save $\Delta\theta_u$ with its user and history-version identifiers\;
+\end{algorithm}
+
+\paragraph{Inputs and outputs.}
+Training consumes a frozen base model, one user identifier, and that user's
+historical records.  It outputs one loadable adapter.  Inference consumes the
+adapter and a new query; optional retrieval or a generated profile may also
+enter the prompt.  The paper evaluates Llama-2-7B on seven LaMP tasks using
+the 100 users with the longest histories.
+
+\paragraph{What transfers.}
+OPPU gives us the correct ownership boundary and a practical offline
+initializer.  It does not learn from task outcomes, pairwise preferences, or
+live feedback.  It also treats each record as text rather than as a replayable
+agent trajectory.  Our offline stage can use its per-user adapter design, but
+our record schema must retain actions, tools, outcomes, timestamps, and the
+generating checkpoint.
+
+\subsection{SPRInG: one adapter through time}
+
+\paragraph{Model and data.}
+SPRInG starts from the same ownership model.  User $u$ has a frozen backbone
+$M_\theta$, an adapter $\phi_u^{(t)}$, and a bounded memory
+$B_u^{(t)}$.  New interactions arrive in periods:
+\begin{equation}
+  D_u^{(t)}=\{(q_i,a_i)\}_{i=1}^{n_t}.
+  \label{eq:spring-stream}
+\end{equation}
+Period 0 supplies the initial adapter.  Each later period updates that same
+adapter.  The paper uses text-generation records, not tool trajectories or
+explicit rewards.
+
+\paragraph{Workflow.}
+\begin{enumerate}
+  \item Score every new $(q,a)$ under the frozen base and the current
+  user-adapted model.
+  \item Keep the top 30\% by drift score.
+  \item Copy $\phi_u^{(t-1)}$ and fine-tune the copy on the selected records.
+  \item Merge selected records with the old memory, score them again under
+  the updated adapter, and retain the hardest 50.
+  \item For a new query, retrieve two memory records.  Use them only when
+  their similarity passes a fixed gate.
+  \item Decode by interpolating adapter-only and retrieval-conditioned token
+  probabilities.
+\end{enumerate}
+
+\paragraph{Selection and update.}
+Let
+\begin{align}
+  p_{\mathrm{base}}(q,a)
+  &=P(a\mid q;M_\theta),\\
+  p_{\mathrm{adap}}^{(t-1)}(q,a)
+  &=P(a\mid q;M_{\theta,\phi_u^{(t-1)}}).
+\end{align}
+SPRInG scores a record by
+\begin{equation}
+  S_t(q,a)
+  =
+  -\log\frac{p_{\mathrm{adap}}^{(t-1)}(q,a)}
+                  {p_{\mathrm{base}}(q,a)}
+  +\alpha\log p_{\mathrm{base}}(q,a).
+  \label{eq:spring-score}
+\end{equation}
+The likelihood ratio favors behavior not yet captured by the adapter.  The
+base likelihood suppresses malformed or low-quality text.  If $\tau_p$ is
+the period's percentile threshold,
+\begin{equation}
+  D_{\mathrm{drift}}^{(t)}
+  =
+  \{(q,a)\in D_u^{(t)}:S_t(q,a)\ge\tau_p\}.
+  \label{eq:spring-drift}
+\end{equation}
+The adapter then takes supervised next-token updates on
+$D_{\mathrm{drift}}^{(t)}$ only:
+\begin{equation}
+  \phi_u^{(t)}
+  =
+  \operatorname{SFT}
+  \left(\phi_u^{(t-1)},D_{\mathrm{drift}}^{(t)}\right).
+  \label{eq:spring-update}
+\end{equation}
+
+\paragraph{Residual memory and inference.}
+After the update, SPRInG rescans
+\begin{equation}
+  C_u^{(t)}
+  =
+  D_{\mathrm{drift}}^{(t)}\cup B_u^{(t-1)}
+\end{equation}
+and recomputes \cref{eq:spring-score} with $\phi_u^{(t)}$.  It keeps the
+$N_{\max}$ highest-scoring records:
+\begin{equation}
+  B_u^{(t)}
+  =
+  \operatorname{Top}_{N_{\max}}
+  \{(q,a)\in C_u^{(t)};S'_t(q,a)\}.
+  \label{eq:spring-buffer}
+\end{equation}
+For a test query, the same adapted model produces an adapter-only
+distribution $p_{\mathrm{par}}$ and, when memory passes the relevance gate, a
+retrieval-conditioned distribution $p_{\mathrm{ret}}$.  The final
+distribution is
+\begin{equation}
+  p_{\mathrm{fin}}
+  =
+  \lambda p_{\mathrm{ret}}+(1-\lambda)p_{\mathrm{par}}.
+  \label{eq:spring-interpolation}
+\end{equation}
+Memory affects inference only.  It is not replayed into later optimizer
+steps.
+
+\begin{algorithm}[t]
+  \caption{SPRInG for one user}
+  \label{alg:spring-one-user}
+  \KwIn{Frozen $M_\theta$; initial $\phi_u^{(0)}$; stream
+  $\{D_u^{(t)}\}_{t\ge1}$; percentile $p$; budget $N_{\max}$}
+  \KwOut{Adapter lineage $\{\phi_u^{(t)}\}$ and memories
+  $\{B_u^{(t)}\}$}
+  $B_u^{(0)}\leftarrow\varnothing$\;
+  \For{$t=1,2,\ldots$}{
+    score $D_u^{(t)}$ with \cref{eq:spring-score}\;
+    retain $D_{\mathrm{drift}}^{(t)}$ with \cref{eq:spring-drift}\;
+    $\phi_u^{(t)}\leftarrow
+      \operatorname{SFT}(\phi_u^{(t-1)},D_{\mathrm{drift}}^{(t)})$\;
+    $C_u^{(t)}\leftarrow D_{\mathrm{drift}}^{(t)}\cup B_u^{(t-1)}$\;
+    rescore $C_u^{(t)}$ under $\phi_u^{(t)}$\;
+    retain $B_u^{(t)}$ with \cref{eq:spring-buffer}\;
+  }
+\end{algorithm}
+
+\paragraph{Inputs and outputs.}
+Training consumes one user's initial adapter and a chronological stream of
+query--response batches.  Each period outputs a new adapter and memory
+snapshot.  Inference consumes the current adapter, current memory, and a new
+query, and outputs a response.  The main experiment uses 100 LongLaMP users,
+five chronological periods, Gemma-3-4B-IT, rank-8 LoRA, AdamW, two epochs,
+and a 90/10 update/evaluation split within each period.
+
+\paragraph{What transfers.}
+SPRInG is the closest end-to-end prior because it preserves user ownership
+through time.  Its main gap is the learning signal: difficult-to-predict text
+is treated as preference drift, and updates still maximize likelihood.  Our
+agent receives richer evidence.  A completed task can include tool calls,
+environment outcomes, user corrections, and explicit preferences.  Those
+signals should determine eligibility and reward; likelihood novelty alone
+cannot tell whether an action helped the user.
+
+\subsection{Concrete design for our policy}
+
+The two papers suggest a clean baseline for our candidate online updates:
+\begin{enumerate}
+  \item Serialize user $u$'s thoughts, conversations, and successful task
+  records into a chronological offline history.
+  \item Train a user-owned adapter with the OPPU objective.  Save the adapter,
+  optimizer state, data boundary, and base-model hash as checkpoint $c_u^{(0)}$.
+  \item Collect later tasks only with the active user checkpoint.  Preserve
+  states, actions, tools, outcomes, corrections, and behavior log-probabilities.
+  \item Use a SPRInG-style selection stage, but score evidence by task
+  validity, preference information, and provenance rather than likelihood
+  novelty alone.
+  \item Apply the chosen update from this note.  Activate it only after the
+  shared validation and rollback gate.
+\end{enumerate}
+
+This baseline separates inheritance from novelty.  OPPU supplies the offline
+per-user policy.  SPRInG supplies the chronological adapter lineage.  Our
+contribution begins where supervised text prediction ends: agent evidence,
+preference- or outcome-driven updates, auditable optimizer state, and safe
+activation.
