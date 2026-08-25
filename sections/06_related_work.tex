@@ -1,0 +1,88 @@
+\section{Related Work}
+\label{sec:related-work}
+
+Personalized agents can be organized by the capability that changes---profile,
+memory, planning, or action execution---and by the mechanism that changes it
+\citep{xu2026personalizedagents}.  We keep those axes separate.  A retrieved
+profile can alter one response without learning a persistent policy, whereas a
+trained memory writer or execution controller changes future agent behavior.
+Our focus is the latter setting: offline personalized initialization followed
+by auditable parameter updates from deployed evidence.
+
+\subsection{Personalized preference and policy learning}
+
+P-RLHF learns shared LoRA parameters together with generic and user-specific
+embeddings under personalized preference objectives
+\citep{li2024personalized}.  Other methods place shared structure in
+low-dimensional personalized reward models \citep{liu2025sharedlora}, learned
+reward bases \citep{shenfeld2025reward}, probabilistic preference bases
+\citep{lee2026vrf}, or a collaborative user--response graph and mixture of
+LoRA experts \citep{choi2025copl}.  C-BPO is especially close to our
+cross-user reasoning: it treats other users' data as implicit negative
+evidence but applies a positive--unlabeled correction to avoid penalizing
+overlapping preferences \citep{ma2026cbpo}.  FedPDPO provides a federated
+shared/personalized alternative \citep{zhu2026fedpdpo}.
+
+These methods motivate the user-conditioned losses inherited by
+\cref{sec:ownership-cone,sec:profile-swap}.  They do not supply
+Ownership-Cone P-DPO's block-specific projection of the actual optimizer
+displacement, Profile-Swap Policy Gradient's same-trajectory cross-profile
+rank contrast, or the common activation-and-rollback lifecycle.  In
+particular, cross-user replay in \cref{sec:ownership-cone} is a stability
+constraint, not an assumption that another user's positive example is a true
+negative.
+
+\subsection{Private, modular, and continually adapted parameters}
+
+OPPU trains one PEFT module per user \citep{tan2024oppu}; Personalized Pieces
+assembles reusable fragments of shared personal adapters
+\citep{tan2024pieces}; and PROPER introduces population-, group-, and
+user-level stages with routed LoRA components \citep{zhang2025proper}.
+Generative Adapter amortizes parameter construction in a forward pass
+\citep{chen2024generativeadapter}, while Meta-LoRA learns an adaptation prior
+for sparse cross-domain evidence \citep{wang2026metalora}.  These works are
+natural storage, cold-start, and adaptation baselines for the shared/private
+parameterization used throughout this note.
+
+Personalized Soups trains preference-specialized policies and merges them
+post hoc \citep{jang2023personalizedsoups}.  Spectral Souping similarly learns
+a policy basis offline and combines outputs or parameters online without
+per-user retraining \citep{chow2026spectral}.  PALM selects a compact
+portfolio that approximates a family of scalarized preferences
+\citep{kim2026manypreferences}.  These basis and portfolio methods are direct
+alternatives to maintaining a continually updated per-user checkpoint.
+SPRInG instead performs selective continual LoRA adaptation and residual
+retention \citep{kim2026spring}.  Our proposals add trajectory provenance,
+optimizer-state transitions, candidate loading, and rollback, and must be
+compared against both the no-retraining policy-basis family and selective
+continual adaptation.
+
+\subsection{Agent decisions, memory, and active evidence}
+
+FABLE freezes the host LLM and learns a small external per-user contextual
+bandit over memory use, information acquisition, and response behavior
+\citep{jin2026fable}.  It is therefore a strong execution-policy baseline:
+unlike our methods, it adapts decisions without updating host-policy
+parameters.  Sequential clarification work trains questions that reveal a
+user's preferences \citep{montazeralghaem2025clarifying}; SELM and hybrid
+preference optimization provide broader active and offline-to-online alignment
+parents \citep{zhang2024selm,bose2024hybrid}.  Checkpoint-Fork Querying differs
+by valuing a candidate after both exact label-conditioned optimizer branches,
+rather than by label uncertainty alone.
+
+Personal memory is also an optimization problem.  Retrieval objectives can
+select or rewrite personal evidence \citep{salemi2024retrieval}, and TrustMem
+learns memory-transition behavior after checking coverage, preservation, and
+faithfulness \citep{yang2026trustmem}.  Muscle Memory compiles recurring user
+intent into executable specialists rather than retrieving text at every
+interaction \citep{omran2026muscle}.  These methods motivate the executable
+state payload in Support-Handoff Replay, but none defines its irreversible
+transition from stale action gradients to verified current-policy
+continuations.
+
+Finally, inference-time methods alter a completed response without necessarily
+updating a persistent agent policy.  Contrasting personal-preference decoding
+is one representative example \citep{bu2025cope}.  Such methods remain valid
+behavioral baselines, but improvement from decoding or retrieval is not
+evidence for the offline-to-online parameter-learning claims studied here.
+

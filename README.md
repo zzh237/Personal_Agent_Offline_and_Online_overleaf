@@ -1,7 +1,8 @@
 # Offline-to-Online Personalized LLM Algorithms
 
 This is an Overleaf-ready technical note for the five validated ideas in
-`directions/ideas/personalized_llm_training_v2_prose_enhanced/`.
+`directions/ideas/personalized_llm_training_v2_prose_enhanced/`, with a
+training-centered personalized-agent related-work map.
 
 ## Build
 
