@@ -27,7 +27,7 @@
 \newcommand{\checkpoint}{c_u^{(t)}}
 
 \newenvironment{settingpointer}
-  {\begin{quote}\small\noindent\textbf{Prior-work setting.}\ }
+  {\begin{quote}\small\noindent\textbf{Comparison.}\ }
   {\end{quote}}
 
 \hypersetup{
@@ -103,14 +103,18 @@ Improve personalization without degrading task success or safety:
   \label{eq:constrained-objective}
 \end{align}
 \paragraph{Exact scope.}
-The target is one persistent user policy, initialized from that user's
-history, updated from later same-user interactions, used for agent tasks, and
-trained through language-model parameter updates.  We call an update
-\emph{online} only when post-deployment evidence changes model parameters;
-fresh rollouts within one training job do not qualify.  No cited method covers
-all five properties.
+The target is one user-specific model that remains in use over time.  It is
+first trained on that user's history, then updated from later interactions
+with the same user.  It executes agent tasks, and learning changes its
+language-model parameters.  A \emph{live update}
+happens after the system is already in use: new interactions change the model,
+and the new model replaces the old one.  Replaying a fixed dataset or
+collecting data during one training run is not a live update.  Here, a
+personalized agent executes tasks for a user by choosing tools, using memory,
+taking actions, or asking questions.  Personalized text generation alone is
+not agent execution.  No cited method covers all of these properties.
 
-\section{Related Problems and Setting Gaps}
+\section{How Prior Work Differs}
 \label{sec:problems}
 
 \subsection{Learning the user}
@@ -123,121 +127,126 @@ structure across users \citep{choi2025copl,zhang2025proper}; FSPO adapts from
 few examples \citep{singh2025fspo}.  We instead use one user's full history.
 
 \begin{settingpointer}
-\textbf{One user:} represented, but several methods train across users;
-offline initialization: yes; post-deployment update: no; personalized agent:
-no; LLM-policy training: P-RLHF, PROPER, and FSPO, but not CoPL.
-\textbf{Difference:} fixed-data preference learning, not deployed agent updates.
+These methods learn from stored preference data.  Several combine data across
+users, and CoPL trains a reward model rather than the LLM that produces
+responses.  They do not study an agent that learns from one user's later task
+interactions.
 \end{settingpointer}
 
-\paragraph{P2: separate persistent preference from transient context.}
+\paragraph{P2: separate lasting preferences from temporary requests.}
 A request may express a lasting preference, a task constraint, or noise.
-SPRInG filters for drift before updating a user adapter
-\citep{kim2026spring}.  Agent traces add tool and reasoning failures that are
-not preference evidence.
+SPRInG detects likely preference changes before updating a user adapter
+\citep{kim2026spring}.  In an agent, a bad result may come from a tool or
+reasoning error rather than a wrong preference.
 
 \begin{settingpointer}
-\textbf{One user:} yes; offline initialization: yes;
-post-deployment update: no; personalized agent: no; LLM-policy training: yes.
-\textbf{Difference:} SPRInG replays a fixed chronological corpus rather than live
-agent trajectories.
+SPRInG trains a separate LoRA for each user and updates its weights over a
+fixed sequence of later text records.  It personalizes text generation, not a
+system that executes tasks through tools, memory, actions, or questions.  It
+therefore does not test live learning from agent actions and task results.
 \end{settingpointer}
 
-\paragraph{P3: handle cold start without losing ownership.}
+\paragraph{P3: learn from little user history without mixing users.}
 Collaborative and federated models improve sparse-user adaptation
 \citep{choi2025copl,zhang2025proper,zhu2026fedpdpo}.  Our setting may use a
-shared prior, but histories, updates, and evaluation remain user-specific.
+shared base model, but histories, updates, and evaluation remain
+user-specific.
 
 \begin{settingpointer}
-\textbf{One user:} represented through shared training; offline
-initialization: yes; post-deployment update: no; personalized agent: no;
-LLM-policy training: PROPER and FedPDPO, while CoPL trains a reward model.
-\textbf{Difference:} these methods pool users offline; our known-user setting
-does not require cold start.
+These methods learn user-specific components from stored data for many users.
+PROPER and FedPDPO update LLM components, while CoPL updates a reward model.
+They do not learn from a deployed agent.  Our setting starts with a known
+user, so learning with no history is not required.
 \end{settingpointer}
 
-\subsection{Moving from offline history to online learning}
+\subsection{Moving from offline history to live learning}
 
-\paragraph{P4: build an offline initializer with online headroom.}
-The offline checkpoint must complete tasks yet remain adaptable.  OPPU
-provides a per-user initializer \citep{tan2024oppu}; WebRL shows the value of
-warm starts for sparse-reward agents \citep{qi2025webrl}.
+\paragraph{P4: build an offline model that can still improve later.}
+The offline model must complete tasks and still be able to learn.  OPPU
+provides a starting model for each user \citep{tan2024oppu}.  WebRL shows that
+an agent learns better when it starts from a working model
+\citep{qi2025webrl}.
 
 \begin{settingpointer}
-\textbf{One user:} OPPU only; offline initialization: yes;
-post-deployment update: no; personalized agent: WebRL only; LLM-policy
-training: yes.  \textbf{Difference:} neither paper combines these properties.
+OPPU trains an LLM adapter for one user but stops after offline training.
+WebRL trains an agent and then improves it with new data collected during
+training, but it has no individual user.  Neither tests a deployed
+user-specific agent that keeps learning.
 \end{settingpointer}
 
-\paragraph{P5: cross the offline--online boundary without a performance dip.}
-Offline records come from older policies.  Synchronization
-\citep{lanchantin2025bridging}, hybrid preference learning
-\citep{bose2024hybrid}, and policy expansion \citep{zhang2023pex} address this
-handoff.  Our handoff must also preserve user, feedback, and checkpoint
-lineage.
+\paragraph{P5: move from offline to live training without losing performance.}
+Offline records come from older models.  Bridging studies when to copy new
+weights to the model that collects data \citep{lanchantin2025bridging}.
+Hybrid preference learning combines stored and newly requested comparisons
+\citep{bose2024hybrid}.  Policy expansion keeps the old policy available while
+the new one explores \citep{zhang2023pex}.  We must also record the user,
+feedback source, and model version for every interaction.
 
 \begin{settingpointer}
-\textbf{One user:} no; offline initialization: yes;
-post-deployment update: no; personalized agent: no; LLM-policy training:
-Bridging only.  \textbf{Difference:} their ``online'' data are collected during
-training, not from a deployed user.
+These methods start with offline data and later collect new data during
+training.  Bridging updates LLM weights; the other papers study more general
+optimization methods.  None studies one user's deployed agent.
 \end{settingpointer}
 
-\paragraph{P6: adapt to drift without forgetting or chasing noise.}
-SPRInG selects likely preference shifts and retains residual memory
-\citep{kim2026spring}.  Stable Asynchrony handles stale trajectories from
-lagged policies \citep{huang2026stable}.  We need both without forgetting
-stable preferences.
+\paragraph{P6: learn changing preferences without forgetting stable ones.}
+SPRInG selects likely preference changes and keeps difficult past examples
+\citep{kim2026spring}.  Stable Asynchrony learns from records produced by older
+model versions \citep{huang2026stable}.  We need both while retaining stable
+preferences.
 
 \begin{settingpointer}
-\textbf{One user:} SPRInG only; offline initialization: SPRInG only;
-post-deployment update: no; personalized agent: no; LLM-policy training: yes.
-\textbf{Difference:} neither joins preference drift and stale agent trajectories
-after deployment.
+SPRInG models one user but uses stored text.  Stable Asynchrony updates an LLM
+from records produced by older model versions, but has no user personalization
+or deployed agent.  Neither studies preference changes in a deployed personal
+agent.
 \end{settingpointer}
 
-\paragraph{P7: learn quickly while minimizing user burden.}
+\paragraph{P7: learn from fewer user corrections.}
 User feedback is expensive.  Hybrid preference optimization trades offline
-data against online queries \citep{bose2024hybrid}.  FABLE learns a pure-online
-per-user execution policy \citep{jin2026fable}.  We measure interactions
-needed to reach a fixed future-task utility.
+data against new queries \citep{bose2024hybrid}.  FABLE learns a per-user
+execution policy only during live use \citep{jin2026fable}.  We measure
+interactions needed to reach the same score on future tasks.
 
 \begin{settingpointer}
-\textbf{One user:} FABLE only; offline initialization: hybrid preference
-optimization only; post-deployment update: FABLE only; personalized agent:
-FABLE only; LLM-policy training: not FABLE.  \textbf{Difference:} FABLE updates
-an external controller, not an initialized LLM policy.
+FABLE learns online for one user while the host agent stays unchanged and
+executes the task.  It has no learned offline starting point and does not
+update the host LLM.
+Hybrid preference optimization combines stored data with new queries, but is
+not a personalized agent.  Neither trains one personalized LLM across both
+phases.
 \end{settingpointer}
 
 \subsection{Learning an agent policy}
 
-\paragraph{P8: preserve task completion while personalizing execution.}
+\paragraph{P8: personalize agent behavior without reducing task success.}
 Personalized agents choose tools, memory, clarifications, and response style
 while completing the task.  PersonalWAB studies web actions
 \citep{cai2025personalwab}, FingerTip 20K studies mobile execution
-\citep{yang2026fingertip}, and FABLE adapts execution around a frozen agent
+\citep{yang2026fingertip}, and FABLE adapts execution around an agent that
+stays unchanged
 \citep{jin2026fable}.
 
 \begin{settingpointer}
-\textbf{One user:} persistent policy only in FABLE; offline initialization: no
-persistent per-user checkpoint; post-deployment update: FABLE only;
-personalized agent: yes; LLM-policy training: not across both phases.
-\textbf{Difference:} none trains one personal LLM across both phases.
+PersonalWAB and FingerTip evaluate personalized actions on fixed benchmarks.
+FABLE learns an external controller online for each user.  None first trains a
+personal LLM from past user data and then continues updating that LLM after
+deployment.
 \end{settingpointer}
 
-\paragraph{P9: assign credit from long, partially observed trajectories.}
-A correction may follow many reasoning and tool steps.  WebRL learns from
-sparse terminal feedback \citep{qi2025webrl}; we must also identify which
-steps reveal the user's preference.
+\paragraph{P9: identify which action caused success or failure.}
+A correction may follow many reasoning and tool steps.  WebRL learns from a
+success or failure signal given only at the end \citep{qi2025webrl}; we must
+also identify which steps reveal the user's preference.
 
 \begin{settingpointer}
-\textbf{One user:} no; offline initialization: yes;
-post-deployment update: no; personalized agent: no; LLM-policy training: yes.
-\textbf{Difference:} WebRL's credit is task-conditioned, not user-conditioned.
+WebRL updates an LLM web agent from task success and failure, but it has no
+individual user and collects data during training.  Our method must also learn
+which action reflects the user's preference.
 \end{settingpointer}
 
 \subsection{Obtaining credible and affordable evidence}
 
-\paragraph{P10: use simulators without training to simulator artifacts.}
+\paragraph{P10: avoid learning quirks of simulated users.}
 UserRL, UserVille, ProPerSim, and CollabLLM train or evaluate agents with
 simulated users
 \citep{qian2025userrl,sun2025userville,kim2025propersim,wu2025collabllm}.
@@ -246,28 +255,27 @@ Simulators reduce cost but can impose their own style and reward biases
 \citep{rezk2025rmcrisis}; real-user evidence remains necessary.
 
 \begin{settingpointer}
-\textbf{One user:} simulated personas, not a persistent target policy; offline
-initialization: method-dependent; post-deployment update: no; personalized
-agent: several methods; LLM-policy training: method-dependent.
-\textbf{Difference:} simulated users cannot establish improvement for one
-deployed real user.
+Several papers train or evaluate agents with simulated personas, but they do
+not maintain a policy for one real user and update it during live use.
+Simulation can support training; it cannot prove improvement for a deployed
+user.
 \end{settingpointer}
 
-\paragraph{P11: make per-user deployment cheaper than repeated large-model use.}
-Per-user adapters and online training add storage and compute.  OPPU uses
-lightweight adapters \citep{tan2024oppu}, CoSteer steers a cloud model from a
-local model \citep{lv2025costeer}, and FABLE learns a small external policy
+\paragraph{P11: reduce the cost of one model per user.}
+Per-user adapters and live training add storage and compute.  OPPU uses
+lightweight adapters \citep{tan2024oppu}, CoSteer uses a local model to guide a
+cloud model \citep{lv2025costeer}, and FABLE learns a small external policy
 \citep{jin2026fable}.  We test whether a compact user policy can match a
 larger generic model at lower serving cost.
 
 \begin{settingpointer}
-\textbf{One user:} yes; offline initialization: OPPU only;
-post-deployment update: FABLE only; personalized agent: FABLE only; LLM-policy
-training: OPPU only.  \textbf{Difference:} CoSteer is tuning-free and FABLE trains an
-external policy; none covers both phases.
+OPPU trains a user's LLM adapter offline.  CoSteer changes generation without
+training model weights.  FABLE learns an external controller during live use.
+None trains a compact user LLM offline and then continues updating it during
+live use.
 \end{settingpointer}
 
-\paragraph{P12: evaluate future behavior rather than history recall.}
+\paragraph{P12: test future behavior, not memory of past text.}
 LongLaMP provides chronological long-form tasks \citep{kumar2024longlamp};
 PrefEval tests preference following \citep{zhao2025prefeval}; PERMA adds
 evolving preferences and tasks \citep{liu2026perma}; and PRISM supplies
@@ -275,34 +283,32 @@ individual feedback \citep{kirk2024prism}.  Our endpoint is behavior on
 untouched future tasks.
 
 \begin{settingpointer}
-\textbf{One user:} represented in the data; offline initialization: not
-applicable; post-deployment update: no; personalized agent: PERMA only;
-LLM-policy training: no.  \textbf{Difference:} these are evaluation resources,
-not update algorithms.
+These are datasets and benchmarks, not training methods.  They contain
+per-user histories; PERMA also evaluates task execution.  None updates a
+deployed model.
 \end{settingpointer}
 
 \section{Claim}
 \label{sec:claim}
 
 \begin{quote}
-\textbf{A compact, user-owned language-model policy can be initialized from
-one person's heterogeneous historical interactions and then improved from
-that person's later agent-task evidence through real parameter updates, while
-preserving task success and safety.}
+\textbf{A compact, user-owned language model first learns from one person's
+past conversations, corrections, and tasks.  It then continues learning from
+that person's later agent interactions by updating its weights, without
+reducing task success or safety.}
 \end{quote}
 
-This requires an offline personal checkpoint, later parameter updates, and
-paired evaluation of personalization and task success.  The method
-contribution is the update rule connecting history, fresh trajectories,
-feedback, replay, and checkpoint activation.
+This requires an offline personal model, later parameter updates, and a
+comparison on the same future tasks.  The method specifies how past user data,
+new task records, feedback, replay, and model replacement work together.
 
 \subsection{Additional claims}
 
 Report these claims only when their tests pass:
 \begin{description}
-\item[Fast adaptation.] Fewer real interactions reach the same valid utility.
-\item[Trajectory advantage.] Tool actions and verified outcomes improve
-  future execution beyond text-only history.
+\item[Fast adaptation.] Fewer real interactions reach the same valid score.
+\item[Value of task traces.] Tool actions and verified outcomes improve future
+  execution beyond text-only history.
 \item[Small versus large.] A compact personalized policy beats a larger
   generic model while preserving task success and lowering cost.
 \item[Simulation benefit.] Simulator training reduces real-user interactions
@@ -314,28 +320,27 @@ Report these claims only when their tests pass:
 \section{Success Criteria}
 \label{sec:success}
 
-\subsection{Hard validity gates}
+\subsection{Required checks}
 
 Before comparing scores, every reported update must pass:
 \begin{enumerate}
   \item the parent and candidate checkpoint hashes differ;
-  \item the candidate loads in a fresh worker and actually generates the
-  evaluated trajectories;
-  \item offline, online-adaptation, validation, and future-test intervals are
-  chronological and disjoint;
-  \item every training record has user, task, behavior-policy, checkpoint,
-  timestamp, and feedback provenance;
+  \item the candidate loads in a separate worker and produces the evaluated
+  task records;
+  \item offline training, live updates, validation, and future testing use
+  separate time periods;
+  \item every training record stores the user, task, generating model,
+  timestamp, and feedback source;
   \item failed runs, users, and rollbacks remain in the report;
-  \item the simulator, reward model, or LLM judge has not seen the future-test
-  target or its answer.
+  \item the simulator, reward model, or LLM judge has not seen the future test
+  or its answer.
 \end{enumerate}
-Failure of any item invalidates the run rather than lowering its score.
+If any check fails, the run is invalid.
 
-\subsection{Primary statistical gate}
+\subsection{Main statistical test}
 
-Let $b$ be the strongest eligible baseline on the validation set.  For each
-user-period cluster, evaluate the candidate and $b$ on identical future
-tasks.  Define
+Let $b$ be the strongest baseline selected on validation data.  Compare it
+with the candidate on the same future tasks:
 \begin{align}
   \Delta_{\mathrm{pers}}
     &= \upers(c_{\mathrm{candidate}})-\upers(c_b),\\
@@ -350,10 +355,9 @@ The main claim passes only when
   \ge -\delta_{\mathrm{task}}.
   \label{eq:primary-gate}
 \end{equation}
-The minimum meaningful personalization effect and
-$\delta_{\mathrm{task}}$ must be fixed before final evaluation.  Confidence
-intervals are clustered by user or task lineage, not by treating correlated
-turns as independent samples.
+Choose the minimum useful personalization gain and
+$\delta_{\mathrm{task}}$ before final evaluation.  Group confidence intervals
+by user or related task; repeated turns are not independent samples.
 
 \begin{table}[t]
   \centering
@@ -366,47 +370,45 @@ turns as independent samples.
     \midrule
     Personalized improvement &
     Paired future-task $\Delta_{\mathrm{pers}}$ against the strongest baseline. &
-    Lower 95\% bound is above zero and the point estimate exceeds the
-    preregistered meaningful effect. \\
+    Lower 95\% bound is above zero and the gain exceeds the value chosen before
+    evaluation. \\
     Task preservation &
     Paired task success or environment reward. &
     Lower 95\% bound exceeds $-\delta_{\mathrm{task}}$. \\
-    Value of online learning &
-    Candidate versus frozen offline checkpoint and naive cumulative update. &
+    Value of live updates &
+    Updated model versus the unchanged offline model and a simple cumulative
+    update. &
     Candidate passes \cref{eq:primary-gate} against both. \\
     Real policy change &
     Parameter count, hashes, load receipt, and changed outputs. &
     Nonzero finite update; candidate is loaded for evaluation. \\
     Fast adaptation &
-    Area under the future-utility learning curve and interactions-to-target. &
-    Higher clustered 95\% interval for area, or fewer interactions to the
-    same preregistered target. \\
+    Learning curve and interactions needed to reach the target. &
+    Better curve or fewer interactions to the same target. \\
     Retention &
-    Backward transfer on earlier stable preferences and tasks. &
-    No task-margin violation; less forgetting than naive continual training. \\
-    Drift recovery &
-    Utility after a controlled persistent preference change. &
-    Faster recovery without elevated updates on transient-noise controls. \\
+    Performance on earlier stable preferences and tasks. &
+    Task success stays within its margin and forgetting is lower than simple
+    continual training. \\
+    Preference-change recovery &
+    Score after a lasting preference change. &
+    Faster recovery without extra updates for temporary noise. \\
     Safety &
-    Severe violations and policy regressions under a fixed panel. &
-    No increase in severe events; lower-severity change stays within its
-    preregistered margin. \\
+    Safety failures on a fixed test set. &
+    No increase in severe events; other changes stay within the chosen margin. \\
     Small versus large &
     Compact personalized model versus large generic, RAG, and profile-enabled
     models under equal information. &
-    Personalization superiority, task non-inferiority, and strictly lower
-    serving cost all hold. \\
+    Better personalization, preserved task success, and lower serving cost. \\
     Simulator benefit &
-    Human--simulator agreement, calibration, and method ranking. &
-    Simulator-trained gain survives held-out human evaluation; simulation is
-    never the only final judge. \\
+    Agreement with people and ranking of compared methods. &
+    The gain survives held-out human evaluation. \\
     Efficiency &
     Training GPU-hours, inference latency, memory, storage, tokens, API cost,
     and user-feedback count. &
-    Candidate lies on the quality--cost Pareto frontier under matched budgets. \\
+    No compared method is both better and cheaper under matched budgets. \\
     Ownership/privacy &
-    Raw-record flow, communication bytes, cross-user leakage probes. &
-    Declared boundary is met with no unauthorized raw-history transfer. \\
+    Where raw records are sent, communication volume, and cross-user leakage. &
+    No raw history crosses the declared boundary. \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -418,39 +420,39 @@ The large-model comparison must include:
   \item a large generic model without personal history;
   \item the same model with the full allowed history;
   \item strong RAG or profile prompting;
-  \item a decoding-time method such as CoSteer when executable
+  \item a method that changes generation without training, such as CoSteer,
+  when executable
   \citep{lv2025costeer};
-  \item the compact offline-only and compact online-adapted policies.
+  \item the compact offline-only model and the same model after live updates.
 \end{enumerate}
 Match prompts, tools, history, and task budgets.  A compact model wins only if
 it improves personalization, preserves task success, and costs less.
 
 \subsection{Adaptation speed}
 
-For threshold $\tau$, measure real interactions rather than epochs:
+For threshold $\tau$, measure real interactions rather than training passes:
 \begin{equation}
   T_{\tau}
   =
   \min\{n:\upers(c_u^{(n)})\ge\tau
   \ \text{and task/safety gates pass}\}.
 \end{equation}
-Also report learning-curve area, final utility, clarifications, correction
-time, and rollbacks.
+Also report scores throughout learning, the final score, clarifications,
+correction time, and rollbacks.
 
 \subsection{Simulator evidence}
 
 Test:
 \begin{enumerate}
-  \item \textbf{Preference fidelity:} agreement and calibration on held-out
-  real-user comparisons.
-  \item \textbf{Method fidelity:} rank correlation between methods under the
-  simulator and under real-user evaluation.
-  \item \textbf{Transfer value:} fewer real interactions are needed after
-  simulator pretraining than without it.
+  \item \textbf{Preference match:} agreement on held-out real-user choices.
+  \item \textbf{Method ranking:} whether simulated and real users rank methods
+  in the same order.
+  \item \textbf{Training value:} whether simulation reduces later real-user
+  interactions.
 \end{enumerate}
 Simulator reward alone does not support a real-user claim.
 
-\section{Experimental Comparison Set}
+\section{Baselines and Evaluation}
 \label{sec:baselines}
 
 \begin{table}[t]
@@ -469,56 +471,56 @@ Simulator reward alone does not support a real-user claim.
     Tests whether parameter updates are necessary. &
     Full-history prompting, retrieval, and generated profile. \\
     Offline per-user PEFT &
-    Tests the value of the online phase. &
+    Tests the value of live updates. &
     OPPU \citep{tan2024oppu}. \\
     Shared personalized policy &
     Tests one-user ownership against a population model. &
     P-RLHF, CoPL, or PROPER
     \citep{li2024personalized,choi2025copl,zhang2025proper}. \\
-    Continual per-user update &
-    Tests the proposed transition and replay rule. &
-    SPRInG and naive cumulative SFT \citep{kim2026spring}. \\
-    Online-only &
+    Repeated update for each user &
+    Tests the proposed update and replay rule. &
+    SPRInG and simple cumulative SFT \citep{kim2026spring}. \\
+    Live updates only &
     Measures the value of offline initialization. &
-    Same optimizer initialized from the generic checkpoint. \\
-    Offline then naive online &
-    Isolates the new coupling mechanism. &
-    Sequential SFT/DPO/RL with no special replay or activation rule. \\
-    Weight-free online control &
+    Same optimizer initialized from the base model. \\
+    Simple offline-to-live update &
+    Tests whether the proposed update rule is necessary. &
+    Sequential SFT/DPO/RL with no special replay or model-switching rule. \\
+    Live control without LLM updates &
     Tests whether policy training is worth its cost. &
     FABLE and CoSteer \citep{jin2026fable,lv2025costeer}. \\
     Large-model teacher &
     Tests compact-model competitiveness. &
-    The CLI/API model that produced the offline trajectories. \\
+    The CLI/API model that produced the offline task records. \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\paragraph{Evaluation substrates.}
+\paragraph{Evaluation benchmarks.}
 Use a chronological stream such as LongLaMP \citep{kumar2024longlamp} and an
 executable agent benchmark such as PersonalWAB or FingerTip 20K
 \citep{cai2025personalwab,yang2026fingertip}.  PrefEval and PERMA add
 long-horizon tests \citep{zhao2025prefeval,liu2026perma}.  Final results need
-held-out human feedback or frozen real-user records and two distinct
-substrates.
+held-out human feedback or stored real-user records and two different
+benchmarks.
 
 \paragraph{Replication.}
 Repeat the protocol across independent users.  Report per-user results, the
-median, worst decile, and cluster-aware intervals, with at least three seeds
-for feasibility and five for final results.
+median, worst decile, and confidence intervals grouped by user, with at least
+three runs for early tests and five for final results.
 
 \section{Claims We Must Not Make}
 \label{sec:nonclaims}
 
 \begin{itemize}
-  \item Chronological offline replay is not post-deployment online learning.
+  \item Replaying old records in time order is not live learning after
+  deployment.
   \item Better retrieval or profile recall is not evidence of a better policy.
   \item A simulator-only win is not evidence of real-user improvement.
-  \item A changed loss value is not evidence that the candidate checkpoint was
-  loaded.
+  \item A changed loss value does not show that the new model was loaded.
   \item A personalized reward-model gain is not automatically a policy or task
   gain \citep{rezk2025rmcrisis}.
-  \item Local adapters do not by themselves prove privacy.
+  \item Keeping adapters local does not by itself prove privacy.
   \item Beating a large model on style does not mean beating it on task
   capability.
   \item Mean improvement cannot hide severe failures for a subset of users.
