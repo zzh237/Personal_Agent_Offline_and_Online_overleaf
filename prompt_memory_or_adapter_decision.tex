@@ -4,9 +4,8 @@
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
 \usepackage{microtype}
-\usepackage{amsmath,amssymb,mathtools}
+\usepackage{amsmath,amssymb}
 \usepackage{booktabs,tabularx,array}
-\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
 \usepackage[dvipsnames]{xcolor}
 \usepackage{enumitem}
 \usepackage{xurl}
@@ -17,519 +16,288 @@
   linkcolor=MidnightBlue,
   citecolor=ForestGreen,
   urlcolor=BrickRed,
-  pdftitle={When Should Personal Evidence Become Model Weights?}
+  pdftitle={Should User Evidence Stay in Context or Enter Model Weights?}
 }
 
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\renewcommand{\arraystretch}{1.16}
 \setlength{\tabcolsep}{5pt}
-\renewcommand{\arraystretch}{1.13}
-\setlist[itemize]{leftmargin=1.35em,itemsep=2pt,topsep=3pt}
-\setlist[enumerate]{leftmargin=1.55em,itemsep=3pt,topsep=3pt}
+\setlist[itemize]{leftmargin=1.4em,itemsep=2pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=1.6em,itemsep=3pt,topsep=3pt}
 
 \newcommand{\adapter}{\Delta\theta_u}
 \newcommand{\memory}{M_u}
-\newcommand{\baseparams}{\theta_0}
 \newcommand{\prefscore}{U_{\mathrm{pref}}}
 \newcommand{\taskscore}{U_{\mathrm{task}}}
 
-\title{\bfseries When Should Personal Evidence Become Model Weights?\\[3pt]
-\large A Reference-Grounded Method and Novelty Audit for\\
-Per-User Offline-to-Online Personalization}
-\author{Technical Design Note}
-\date{August 29, 2026}
-
 \begin{document}
-\maketitle
 
-\begin{abstract}
-This note asks a narrow question: when should evidence about one user remain
-in an editable prompt or memory, and when should it update that user's model
-adapter?  The question matters because a parameter update is slower, harder to
-inspect, and more likely to affect unrelated tasks.  It is useful only when it
-improves future behavior beyond what the same evidence can achieve as context.
+\begin{center}
+  {\LARGE\bfseries Should User Evidence Stay in Context or Enter Model
+  Weights?\par}
+  \vspace{5pt}
+  {\large A Design Note on Personalized Models\par}
+  \vspace{4pt}
+  {\small August 29, 2026}
+\end{center}
 
-Prior work already covers per-user adapters, continual adapter updates,
-retrieval memory, and context-conditioned steering.  The closest method,
-SPRInG, combines a user adapter with retrieved history.  EvolveR separately
-tests whether retrieved experience should remain context or be absorbed into
-parameters.  These papers, rather than the current local implementations,
-define the evidence boundary of this note.
+\section{Decision}
 
-The remaining hypothesis is a paired placement test.  For the same evidence,
-build one context candidate and one adapter candidate.  Compare them on later
-tasks, then prefer the adapter only if it improves personalization without
-reducing task success relative to the context candidate.  This is a proposed
-experiment, not a verified result or a settled novelty claim.
-\end{abstract}
+New user preferences should first stay in a prompt or external memory. This
+makes them easy to inspect, change, and delete.
 
-\section{Decision in Plain Language}
-
-A prompt is the default place for new personal information.  It is easy to
-read, change, delete, and limit to one task.  A user adapter is worth testing
-only when a preference repeats across sessions, remains stable, applies to
-several tasks, and should work without profile text at runtime.
-
-Learning \(\adapter\) is not useful merely because training is possible.  The
-update must answer a harder question:
-\begin{quote}
-Does the adapter improve later tasks more than giving the same evidence to the
-model as prompt or memory, without reducing task success?
-\end{quote}
-If the answer is no or remains uncertain, the evidence should stay in editable
-context.
-
-\section{Terms Used in This Note}
-
-\begin{table}[ht]
-  \centering
-  \caption{Four objects that should not be treated as the same thing.}
-  \label{tab:objects}
-  \begin{tabularx}{\textwidth}{@{}L{0.17\textwidth}L{0.28\textwidth}YY@{}}
-    \toprule
-    Object & Meaning & Used when & Main property \\
-    \midrule
-    Profile prompt &
-    A short text statement of user facts or preferences &
-    Added directly to the input &
-    Easy to inspect and edit, but consumes context \\
-    Retrieved memory \(\memory\) &
-    Selected records from the user's earlier interactions &
-    Retrieved for a relevant request &
-    Keeps details outside the model, but retrieval can miss or add noise \\
-    Training hint \(h\) &
-    A correction shown to a teacher during training &
-    Used to make a target or distillation signal &
-    A supervision channel, not necessarily deployed user state \\
-    User adapter \(\adapter\) &
-    A learned parameter change for user \(u\) &
-    Loaded with the frozen base model &
-    Works without profile text, but is harder to inspect and undo \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
-
-\paragraph{Post-deployment online update.}
-In this note, an online update occurs after the system has started serving the
-user.  New user evidence arrives, an optimizer changes parameters, and the
-system produces a new loadable checkpoint.  Training on a fixed dataset with
-fresh model rollouts is often called online RL, but it is not the same as
-learning from a deployed user's later interactions.
-
-\paragraph{Personalized agent.}
-A personalized agent completes tasks through tools, memory, actions, or
-clarifying questions while adapting to one user.  A system that only changes
-the style or content of generated text is personalized generation, not
-necessarily personalized agent execution.
-
-\section{Where Each Design Choice Comes From}
-
-The current local code may change or contain errors, so it is not evidence for
-the method.  Table~\ref{tab:sources} separates published support from choices
-proposed in this note.
-
-\begin{table}[ht]
-  \centering
-  \caption{Source and status of each design choice.}
-  \label{tab:sources}
-  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}L{0.49\textwidth}Y@{}}
-    \toprule
-    Design choice & Source & Status here \\
-    \midrule
-    Chronological split &
-    SPRInG orders each user's records over five periods and uses the earlier
-    \(90\%\) of each period for updating and the later \(10\%\) for evaluation
-    \cite{kim2026spring}. &
-    Inherited evaluation design \\
-    Compare context and adapters &
-    OPPU compares retrieval, profile prompting, and per-user PEFT
-    \cite{tan2024oppu}.  SPRInG reports component ablations for adapter and
-    retrieval paths. &
-    Inherited comparison requirement \\
-    Test context against parameter absorption &
-    EvolveR keeps retrieved experience loss-masked in its main method and
-    reports a separate unmasked absorption ablation \cite{wu2025evolver}. &
-    Motivation; the paired selection rule is proposed \\
-    Measure task success &
-    EvolveR uses final-answer correctness as its outcome reward.  In this
-    project, completing the task is part of the personalized-agent definition. &
-    Required outcome, not a borrowed algorithm \\
-    Safety gate &
-    SPRInG discusses harmful drift, poisoning, and safety filtering only as
-    future work. &
-    Not part of the core method \\
-    Confidence intervals &
-    SPRInG reports multi-seed results, \(p\)-values, and paired-bootstrap
-    confidence intervals. &
-    Result reporting only, not an update rule \\
-    Rollback &
-    The closest papers do not implement a rollback procedure. &
-    Omitted from the core method \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
-
-\section{Why Not Use a Prompt for Everything?}
-
-\subsection{Cases where prompt or memory is better}
-
-Keep evidence outside the weights when it is:
+Train a user adapter only when a preference:
 \begin{itemize}
-  \item observed once or weakly supported;
-  \item temporary, such as a tone request for one report;
-  \item tied to one task, project, or tool;
-  \item likely to change;
-  \item easy to state as a short rule; or
-  \item sensitive enough that the user should be able to inspect and delete it.
-\end{itemize}
-
-This choice has real costs.  Retrieval can select the wrong record.  Long
-profiles consume context and are processed again for every request.  The model
-may also ignore a relevant instruction.
-
-\subsection{Cases where an adapter may help}
-
-Test an adapter when the preference:
-\begin{itemize}
-  \item appears in several independent sessions;
+  \item appears in several sessions;
   \item remains stable over time;
-  \item affects several task families;
-  \item cannot be expressed well as one short instruction; and
-  \item should affect behavior even when profile text is absent.
+  \item affects several kinds of tasks; and
+  \item should apply even when the prompt does not include a user profile.
 \end{itemize}
 
-An adapter may reduce repeated prompt cost and make the behavior more
-consistent.  It also introduces training cost, forgetting risk, broader
-behavior changes, and model-management work.  These costs make \(\adapter\)
-an empirical choice rather than a default.
+A parameter update is not the default choice. It must personalize better than
+context without reducing task success.
 
-\section{Closest Prior Work}
+This note proposes a simple test. Use the same user evidence to build two
+versions:
+\begin{enumerate}
+  \item \textbf{Context version:} Store the evidence in the prompt or external
+  memory. Do not change the model.
+  \item \textbf{Parameter version:} Train a user adapter on the same evidence.
+  Do not include that evidence in the test prompt.
+\end{enumerate}
+Both versions start from the same model and run on the same later tasks.
+Choose the parameter version only when it improves personalization and
+preserves task success. Otherwise, keep the context version.
 
-\subsection{OPPU and Personalized DPO}
+This is a proposed experiment. It is not yet a validated algorithm.
 
-OPPU trains one PEFT module from each user's historical behavior
-\cite{tan2024oppu}.  It can also use retrieved history or a generated profile.
-It is an offline method.  It does not decide, for each later observation,
-whether that observation should remain in memory or enter the adapter.
-
-Personalized RLHF, evaluated through personalized DPO, learns user-conditioned
-representations and LoRA parameters from offline preference pairs
-\cite{li2024prlhf}.  It does not study chronological post-deployment updates,
-retrieval memory, or agent task outcomes.
-
-\subsection{SPRInG}
-
-SPRInG is the closest personalization method \cite{kim2026spring}.  It already
-contains:
-\begin{itemize}
-  \item one evolving LoRA adapter per user;
-  \item likelihood-based selection of incoming interactions;
-  \item a bounded buffer for examples that remain hard after an update;
-  \item relevance-gated retrieval; and
-  \item token-level interpolation between adapter-only and
-  retrieval-conditioned generation.
-\end{itemize}
-
-Thus, ``combine memory and an adapter'' is not new.  SPRInG chooses training
-examples through likelihood drift, then retains post-update residuals.  It
-does not train matched context and adapter candidates from the same evidence
-and select between them using later personalization and task success.
-
-SPRInG simulates sequential updates with chronological LongLaMP records.  It
-personalizes text generation.  It does not execute tool-based agent tasks or
-learn from live post-deployment agent outcomes.
-
-\subsection{EvolveR}
-
-EvolveR studies an agent-level experience loop rather than per-user
-personalization \cite{wu2025evolver}.  It stores distilled principles as
-retrieved context and updates a global policy with GRPO.  Its standard method
-masks retrieved experience tokens from the training loss.
-
-EvolveR also tests direct experience absorption by unmasking those tokens.
-Its reported average drops from \(0.382\) to \(0.371\).  The authors attribute
-the drop to noisy or irrelevant retrieved principles.  This result supports a
-conservative design: context should not be written into weights without a
-quality and relevance test.
-
-\subsection{CoSteer}
-
-CoSteer is a tuning-free alternative \cite{wu2025costeer}.  A local small model
-runs with and without private context.  The difference between its two token
-distributions steers a frozen cloud model.  CoSteer does not learn
-\(\adapter\).  It shows that runtime personalization can be stronger than
-plain prompting without changing model weights, so it is a useful baseline
-when privacy and local inference matter.
-
-\section{Novelty Audit}
+\section{Three Forms of User Information}
 
 \begin{table}[ht]
   \centering
-  \caption{What the closest methods already cover.  ``Sequential'' means that
-  later records can change model parameters.}
-  \label{tab:coverage}
-  \begin{tabularx}{\textwidth}{@{}L{0.16\textwidth}L{0.18\textwidth}L{0.19\textwidth}L{0.18\textwidth}Y@{}}
+  \caption{Each form of user information serves a different purpose.}
+  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}L{0.34\textwidth}Y@{}}
     \toprule
-    Method & Learned object & External user state & Sequential update & Agent task outcomes \\
+    Form & Use & Main property \\
     \midrule
-    OPPU &
-    Per-user PEFT &
-    Optional profile or retrieval &
-    No &
-    No \\
-    Personalized DPO &
-    Shared LoRA and user representation &
-    Optional user text &
-    No &
-    No \\
-    SPRInG &
-    Per-user LoRA &
-    Residual retrieval buffer &
-    Yes, on a historical stream &
-    No \\
-    EvolveR &
-    Global agent policy &
-    Experience Base &
-    Yes, during agent training &
-    Yes, but not per user \\
-    CoSteer &
-    None &
-    Private local context &
-    No parameter update &
-    No \\
-    Proposed test &
-    Per-user adapter when accepted &
-    Editable memory otherwise &
-    Yes, after deployment &
-    Required \\
+    Prompt or external memory &
+    Provides user facts, preferences, or history at runtime. &
+    Easy to change, but uses context and may retrieve the wrong record. \\
+    Training prompt &
+    Gives a teacher model instructions for creating a training target. &
+    Provides training signal. It is not necessarily part of the deployed
+    user state. \\
+    User adapter \(\adapter\) &
+    Stores parameters learned for user \(u\). &
+    Works without repeated profile text, but is harder to inspect and change. \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
+In this note, an online update happens after deployment. The system first
+serves the user. It then learns from new interactions and creates a new
+adapter. Training on a fixed dataset is not post-deployment learning, even
+when the training process draws new samples.
+
+A personalized agent must also complete tasks. Changing writing style alone
+does not make a system a personalized agent.
+
+\section{Sources for the Design}
+
+The current project code may change or contain errors. It is not evidence for
+the method. The design below comes from published papers.
+
 \begin{table}[ht]
   \centering
-  \caption{The narrow mechanism-level difference under study.}
-  \label{tab:delta}
-  \begin{tabularx}{\textwidth}{@{}L{0.17\textwidth}L{0.25\textwidth}L{0.25\textwidth}Y@{}}
+  \caption{Source of each design choice.}
+  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}L{0.52\textwidth}Y@{}}
     \toprule
-    Method & How evidence enters weights & How evidence remains external &
-    How an update is accepted \\
+    Choice & Source & Use in this note \\
     \midrule
-    SPRInG &
-    High likelihood-drift examples train the adapter &
-    Hard post-update residuals enter the retrieval buffer &
-    Fixed selection rule; no matched context-versus-adapter validation \\
-    EvolveR &
-    Agent trajectories update the policy; experience-token absorption is an
-    ablation &
-    Distilled principles are retrieved as context &
-    Training reward; no per-evidence storage decision \\
-    Proposed test &
-    One candidate adapter is trained from eligible evidence &
-    A matched candidate stores the same evidence as context &
-    Later tasks must favor the adapter on personalization without reducing
-    task success \\
+    Split records by time &
+    SPRInG divides each user's records into five time periods. It uses the
+    first \(90\%\) of each period for updates and the last \(10\%\) for
+    evaluation \cite{kim2026spring}. &
+    Adopt \\
+    Compare context and parameters &
+    OPPU compares retrieval, profile prompting, and per-user PEFT
+    \cite{tan2024oppu}. SPRInG also evaluates adapter and retrieval
+    components. &
+    Required baseline \\
+    Compare external and learned experience &
+    EvolveR keeps experience in context in its main method. It also tests
+    writing that experience into parameters \cite{wu2025evolver}. &
+    Motivation \\
+    Measure task success &
+    EvolveR uses final-answer correctness as an outcome reward. Our agent must
+    also finish its task. &
+    Separate metric \\
+    Safety checks &
+    SPRInG lists safety filters and poisoning defenses as future work. &
+    Not a core method step \\
+    Confidence intervals &
+    SPRInG uses confidence intervals to report results. It does not use them
+    to decide each update. &
+    Reporting only \\
+    Rollback &
+    The closest papers do not provide a rollback method that we can reuse. &
+    Omit for now \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\paragraph{What is not new.}
-Per-user LoRA, personalized DPO, continual adapter updates, retrieval plus
-parameters, and context-versus-parameter ablations all exist.
+\section{What Prior Work Covers}
 
-\paragraph{What may remain distinct.}
-The tentative difference is an evidence-level, matched comparison.  The same
-evidence creates a context candidate and an adapter candidate from the same
-parent checkpoint.  Later chronological tasks decide where the evidence
-should live.  The adapter is preferred only when it improves personalization
-and does not reduce task success relative to context.
+\paragraph{OPPU.}
+OPPU trains one parameter-efficient fine-tuning (PEFT) module from each user's
+history \cite{tan2024oppu}. It can also use retrieval or a user profile. OPPU
+is an offline method. It does not update from later deployed interactions.
 
-\paragraph{Current verdict.}
-This is a defensible research hypothesis, not yet a publication novelty claim.
-The claim becomes credible only after a broader search confirms that no prior
-method performs this paired placement and constrained activation procedure.
+\paragraph{Personalized DPO.}
+Personalized RLHF learns user representations and LoRA parameters from offline
+preference data \cite{li2024prlhf}. It does not study external memory or task
+outcomes from tool-using agents.
 
-\section{Proposed Paired Placement Test}
+\paragraph{SPRInG.}
+SPRInG is the closest personalization method \cite{kim2026spring}. It uses a
+user LoRA adapter and a retrieval buffer, then updates both over time.
+Therefore, combining external memory with an adapter is not a new
+contribution.
 
-\subsection{State and evidence}
+SPRInG selects training records by their change in likelihood. Records that
+remain hard after training enter its buffer. It does not use the same evidence
+to build matched context and parameter versions, then select one on later
+tasks.
 
-For user \(u\) at time \(t\), the active state is
+\paragraph{EvolveR.}
+EvolveR summarizes lessons from agent trajectories and stores them in an
+external Experience Base \cite{wu2025evolver}. It also tests learning these
+lessons in model parameters. The reported average score falls from \(0.382\)
+to \(0.371\). This result suggests that writing unfiltered experience into
+parameters can add noise.
+
+\paragraph{CoSteer.}
+CoSteer does not train user parameters \cite{lv2025costeer}. A local model
+runs with and without private user context. The difference between those
+outputs steers a cloud model. CoSteer shows why a runtime method should remain
+a baseline.
+
+\section{Proposed Test}
+
+At time \(t\), user \(u\) has adapter \(\adapter^{(t)}\) and external memory
+\(\memory^{(t)}\). Let \(E_t\) be new evidence from later interactions.
+
+\paragraph{Context version.}
 \begin{equation}
-  S_u^{(t)} =
-  \left(\baseparams,\adapter^{(t)},\memory^{(t)}\right),
-\end{equation}
-where \(\baseparams\) are frozen base parameters, \(\adapter^{(t)}\) is the
-user adapter, and \(\memory^{(t)}\) is editable memory.
-
-Each evidence record is
-\begin{equation}
-  e_i=(u,t_i,x_i,\tau_i,y_i,f_i,o_i).
-\end{equation}
-Here \(x_i\) is the task, \(\tau_i\) is the agent trajectory, \(y_i\) is the
-final answer, \(f_i\) is user feedback, and \(o_i\) is the environment
-outcome.
-
-\subsection{Matched candidates}
-
-Let \(E_t\) be a checked batch of new evidence.  Build both candidates from the
-same active state.
-
-\paragraph{Context candidate.}
-\begin{equation}
-  M_{u,\mathrm{ctx}} =
-  \operatorname{MemoryUpdate}\left(\memory^{(t)},E_t\right),
+  M_{u,\mathrm{ctx}}
+  =\operatorname{MemoryUpdate}\!\left(\memory^{(t)},E_t\right),
   \qquad
   \Delta\theta_{u,\mathrm{ctx}}=\adapter^{(t)}.
 \end{equation}
 
-\paragraph{Adapter candidate.}
+\paragraph{Parameter version.}
 \begin{equation}
-  \Delta\theta_{u,\mathrm{par}} =
-  \operatorname{TrainAdapter}\left(\adapter^{(t)},E_t\right),
+  \Delta\theta_{u,\mathrm{par}}
+  =\operatorname{TrainAdapter}\!\left(\adapter^{(t)},E_t\right),
   \qquad
   M_{u,\mathrm{par}}=\memory^{(t)}.
 \end{equation}
-The adapter candidate uses a fixed, predeclared personalized-training method.
-It is evaluated without adding the new evidence to its prompt.
 
-\subsection{Activation rule}
+The two versions must use the same evidence, starting model, and later tasks
+\(V_t\). The parameter version cannot receive \(E_t\) in its test prompt.
+Otherwise, the test cannot show what the adapter learned.
 
-Let \(V_t\) contain sessions that occur after \(E_t\) but before the untouched
-final test period.  Evaluate the context candidate \(m_{\mathrm{ctx}}\), the
-adapter candidate \(m_{\mathrm{par}}\), and the current model \(m_0\) under the
-same decoding settings.
-
-The adapter candidate dominates the context candidate when
+Use two selection conditions:
 \begin{equation}
-  m_{\mathrm{par}} \succ m_{\mathrm{ctx}}
-  \quad\Longleftrightarrow\quad
-  \begin{cases}
-    \prefscore(m_{\mathrm{par}};V_t)
-      > \prefscore(m_{\mathrm{ctx}};V_t),\\
-    \taskscore(m_{\mathrm{par}};V_t)
-      \ge \taskscore(m_{\mathrm{ctx}};V_t).
-  \end{cases}
-  \label{eq:dominance}
+  \begin{aligned}
+  \prefscore(m_{\mathrm{par}};V_t)
+    &> \prefscore(m_{\mathrm{ctx}};V_t),\\
+  \taskscore(m_{\mathrm{par}};V_t)
+    &\ge \taskscore(m_{\mathrm{ctx}};V_t).
+  \end{aligned}
 \end{equation}
-This is a proposed Pareto rule, not a result inherited from prior work.  If the
-adapter does not dominate, retain the context candidate.  If the evidence is
-contradictory or insufficient, make no placement decision.  Confidence
-intervals may accompany the reported comparison, but they are not part of the
-selection rule.
 
-\begin{algorithm}[ht]
-\caption{Reference-grounded paired evidence placement test}
-\label{alg:placement}
-\KwIn{Active state \(S_u^{(t)}\), new evidence \(E_t\), later validation
-window \(V_t\)}
-\KwOut{Versioned next state \(S_u^{(t+1)}\)}
-Check user identity, time, task, feedback, and task outcome\;
-\If{eligible evidence is insufficient}{
-  keep the active state\;
-  \Return \(S_u^{(t)}\)\;
-}
-Build \(m_{\mathrm{ctx}}\) by storing \(E_t\) as editable context\;
-Build \(m_{\mathrm{par}}\) by training an adapter on the same \(E_t\)\;
-Evaluate \(m_0\), \(m_{\mathrm{ctx}}\), and \(m_{\mathrm{par}}\) on the same \(V_t\)\;
-\eIf{\(m_{\mathrm{par}} \succ m_{\mathrm{ctx}}\) under Eq.~\eqref{eq:dominance}}{
-  select the adapter candidate\;
-}{
-  select the context candidate\;
-}
-\Return the versioned next state\;
-\end{algorithm}
+Choose the parameter version only when both conditions hold. Otherwise, choose
+the context version. Do not update when the evidence is too limited or
+contradictory.
 
-\section{Experiment That Can Answer the Question}
+This rule belongs to the proposed experiment. It is not a finding from the
+papers above.
 
-\subsection{Chronological data boundary}
+\section{Experiment}
 
-Split whole sessions before extracting a profile or generating training data:
+\subsection{Split the data by time}
+
+Order complete sessions before extracting profiles or creating training data:
 \begin{equation}
   H_u^{\mathrm{past}}
   \prec E_t
   \prec V_t
   \prec H_u^{\mathrm{test}}.
 \end{equation}
-The order symbol means ``occurs earlier than.''  The profile, memory, hints,
-preference pairs, and adapter may use only the records available at that time.
-The final test period remains untouched until the method is fixed.
+Use past records for initialization. Use \(E_t\) to build the two versions.
+Use \(V_t\) to select one. Keep the final period untouched for testing.
 
-\subsection{Required arms}
+\subsection{Minimum baselines}
 
 \begin{table}[ht]
   \centering
-  \caption{Minimum comparison needed to identify where personalization comes
-  from.}
-  \label{tab:arms}
-  \begin{tabularx}{0.94\textwidth}{@{}L{0.31\textwidth}Y@{}}
+  \caption{Baselines needed for the first experiment.}
+  \begin{tabularx}{0.94\textwidth}{@{}L{0.32\textwidth}Y@{}}
     \toprule
-    Arm & Question answered \\
+    Version & Question \\
     \midrule
-    Frozen base &
-    What happens without personalization? \\
-    Base plus profile or memory &
-    How much can explicit context do without training? \\
-    User adapter only &
-    Did the weights store useful personal behavior? \\
-    User adapter plus memory &
-    Are the two representations complementary? \\
-    OPPU-style adapter &
-    Does direct offline per-user training suffice? \\
-    SPRInG &
-    Does likelihood-based selective adaptation plus retrieval suffice? \\
-    CoSteer, when deployment permits &
-    Can tuning-free local steering avoid a parameter update? \\
-    Paired placement test &
-    Does evidence-level placement improve over fixed storage rules? \\
+    Base model & What happens without personalization? \\
+    Base model with prompt or memory & What can context do without training? \\
+    Adapter only & Did the parameters learn the user's preferences? \\
+    Adapter with prompt or memory & Do the two forms help each other? \\
+    OPPU & Is standard per-user PEFT enough? \\
+    SPRInG & Is selective updating with retrieval enough? \\
+    CoSteer, when practical & Can runtime steering avoid training? \\
+    Proposed test & Does choosing where to store evidence improve results? \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\subsection{Separate outcomes}
-
-Do not combine all outcomes into one score.  Report:
+Report three outcomes separately:
 \begin{itemize}
-  \item preference match on future sessions;
-  \item environment-verified task success;
-  \item prompt tokens, training cost, and inference cost;
-  \item results for each user and task family; and
-  \item uncertainty intervals as evaluation reporting.
+  \item personalization on later tasks;
+  \item task success verified by the environment; and
+  \item prompt, training, and inference cost.
+\end{itemize}
+Do not combine them into one score. Use confidence intervals only to show how
+stable the results are.
+
+\section{Novelty Boundary}
+
+The following ideas already exist:
+\begin{itemize}
+  \item one adapter for each user;
+  \item continued updates to a user adapter;
+  \item external memory used with an adapter; and
+  \item comparisons between context and parameter learning.
 \end{itemize}
 
-Pairwise judges must allow ties and invalid outputs.  A style judge cannot
-replace task correctness.  A result from one synthetic user cannot establish a
-general personalization method.
+The possible new point is narrower. Use the same evidence to build a context
+version and a parameter version. Then use the same user's later tasks to
+decide where that evidence should stay.
 
-\section{Implementation Order}
+This difference still needs a broader literature review and an experiment.
+For now, it is a research hypothesis.
 
-The shortest credible path is:
+\section{Next Steps}
+
 \begin{enumerate}
-  \item Select a time-stamped, same-user dataset and define chronological
-  update, validation, and test periods.
-  \item Implement the published prompt, retrieval, OPPU, and SPRInG baselines
-  from their papers or official repositories.
-  \item Fix one adapter-training procedure and one context-construction
-  procedure before testing placement.
-  \item Run base, context-only, adapter-only, and adapter-plus-context arms.
-  \item Run the paired placement test using the same evidence and validation
-  tasks for both candidates.
-  \item Report personalization, task success, and cost separately.
-  \item Extend to tool-using agent trajectories only after the placement result
-  is reproduced.
+  \item Select same-user data with reliable timestamps.
+  \item Implement OPPU, SPRInG, and prompt or memory baselines from their
+  papers or official code.
+  \item Fix one adapter training method and one memory update method.
+  \item Run the base, context-only, adapter-only, and combined versions.
+  \item Run the matched comparison proposed in this note.
+  \item Extend to tool-using agent tasks only after personalization and task
+  success both hold.
 \end{enumerate}
-
-\section{Final Assessment}
-
-There is also no general reason to prefer \(\adapter\) over a prompt.  Prompt
-or memory is better for recent, uncertain, temporary, task-local, changing, or
-sensitive evidence.  An adapter is worth the cost only for repeated and stable
-behavior that transfers across tasks and works without runtime profile text.
-
-The proposed paired placement test is narrower than ``memory plus adapter.''
-It asks both representations to compete using the same evidence and later
-tasks.  SPRInG and EvolveR make this a plausible next experiment, but they also
-narrow the novelty claim.  The paper should claim a new method only after the
-literature audit and matched experiment both support that claim.
 
 \begin{thebibliography}{9}
 
@@ -537,7 +305,7 @@ literature audit and matched experiment both support that claim.
 Zhaoxuan Tan, Qingkai Zeng, Yijun Tian, Zheyuan Liu, Bing Yin, and Meng Jiang.
 \newblock Democratizing Large Language Models via Personalized
 Parameter-Efficient Fine-Tuning.
-\newblock In \emph{EMNLP}, 2024.
+\newblock EMNLP, 2024.
 \newblock \url{https://aclanthology.org/2024.emnlp-main.372/}.
 
 \bibitem{li2024prlhf}
@@ -560,7 +328,7 @@ Lifecycle.
 \newblock arXiv:2510.16079, 2025.
 \newblock \url{https://arxiv.org/abs/2510.16079}.
 
-\bibitem{wu2025costeer}
+\bibitem{lv2025costeer}
 Hang Lv, Sheng Liang, Hao Wang, and others.
 \newblock CoSteer: Collaborative Decoding-Time Personalization via Local
 Delta Steering.
