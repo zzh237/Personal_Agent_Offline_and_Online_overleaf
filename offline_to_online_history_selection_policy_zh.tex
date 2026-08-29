@@ -371,9 +371,7 @@ student、TA 和 teacher 不共享 LoRA。
 \end{equation}
 \(\mathbf e_{\theta}^{\mathrm{task}}\) 和
 \(\mathbf e_{\theta}^{\mathrm{hist}}\) 只是任务与历史记录的表示，\textbf{不是}
-Transformer attention 内部的 query、key 或 value。上文的
-\(\texttt{q\_proj},\texttt{k\_proj},\texttt{v\_proj}\) 仍按 Qwen 的正常前向过程
-产生隐藏状态；式~\eqref{eq:score} 不直接读取它们。
+Transformer attention 内部的 query、key 或 value。
 
 \(\mathtt{STOP}\) 也用固定文本编码成一个候选。没有新分类头。式~\eqref{eq:pointer}
 中的 \(T\) 控制 cosine score 的温度；首个实现使用 \(T=0.05\)。
