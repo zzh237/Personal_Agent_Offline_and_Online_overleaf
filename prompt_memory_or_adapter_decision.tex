@@ -32,10 +32,9 @@
 \newcommand{\baseparams}{\theta_0}
 \newcommand{\prefscore}{U_{\mathrm{pref}}}
 \newcommand{\taskscore}{U_{\mathrm{task}}}
-\newcommand{\safescore}{U_{\mathrm{safe}}}
 
 \title{\bfseries When Should Personal Evidence Become Model Weights?\\[3pt]
-\large A Code-Grounded Method and Novelty Audit for\\
+\large A Reference-Grounded Method and Novelty Audit for\\
 Per-User Offline-to-Online Personalization}
 \author{Technical Design Note}
 \date{August 29, 2026}
@@ -50,18 +49,18 @@ adapter?  The question matters because a parameter update is slower, harder to
 inspect, and more likely to affect unrelated tasks.  It is useful only when it
 improves future behavior beyond what the same evidence can achieve as context.
 
-Two local codebases already contain real training.  One trains a Qwen3-4B
-LoRA adapter with DPO.  The other implements GRPO and online policy
-distillation (OPD).  These mechanisms are not new contributions.  Prior work
-also covers per-user adapters, continual adapter updates, retrieval memory,
-and context-conditioned steering.  The closest method, SPRInG, already
-combines a user adapter with retrieved history.
+Prior work already covers per-user adapters, continual adapter updates,
+retrieval memory, and context-conditioned steering.  The closest method,
+SPRInG, combines a user adapter with retrieved history.  EvolveR separately
+tests whether retrieved experience should remain context or be absorbed into
+parameters.  These papers, rather than the current local implementations,
+define the evidence boundary of this note.
 
 The remaining hypothesis is a paired placement test.  For the same evidence,
 build one context candidate and one adapter candidate.  Compare them on later
-tasks, then activate the adapter only if it beats the context candidate while
-preserving task success and safety.  This is a proposed experiment, not a
-verified result or a settled novelty claim.
+tasks, then prefer the adapter only if it improves personalization without
+reducing task success relative to the context candidate.  This is a proposed
+experiment, not a verified result or a settled novelty claim.
 \end{abstract}
 
 \section{Decision in Plain Language}
@@ -71,11 +70,11 @@ read, change, delete, and limit to one task.  A user adapter is worth testing
 only when a preference repeats across sessions, remains stable, applies to
 several tasks, and should work without profile text at runtime.
 
-Learning \(\adapter\) is not useful merely because the code can train it.
-The update must answer a harder question:
+Learning \(\adapter\) is not useful merely because training is possible.  The
+update must answer a harder question:
 \begin{quote}
 Does the adapter improve later tasks more than giving the same evidence to the
-model as prompt or memory, without reducing task success or safety?
+model as prompt or memory, without reducing task success?
 \end{quote}
 If the answer is no or remains uncertain, the evidence should stay in editable
 context.
@@ -123,41 +122,52 @@ clarifying questions while adapting to one user.  A system that only changes
 the style or content of generated text is personalized generation, not
 necessarily personalized agent execution.
 
-\section{What the Local Code Already Implements}
+\section{Where Each Design Choice Comes From}
 
-The two repositories contain training algorithms, not only data generation.
+The current local code may change or contain errors, so it is not evidence for
+the method.  Table~\ref{tab:sources} separates published support from choices
+proposed in this note.
 
 \begin{table}[ht]
   \centering
-  \caption{Code-grounded status of the two local implementations.}
-  \label{tab:code}
-  \begin{tabularx}{\textwidth}{@{}L{0.18\textwidth}L{0.28\textwidth}YY@{}}
+  \caption{Source and status of each design choice.}
+  \label{tab:sources}
+  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}L{0.49\textwidth}Y@{}}
     \toprule
-    Repository & Implemented update & Current evidence & Main defect \\
+    Design choice & Source & Status here \\
     \midrule
-    \path{/fsx/xzhichao/workspace/offline training} &
-    Qwen3-4B LoRA trained with \texttt{TRL DPOTrainer} &
-    A clean comparison reports \(48.69\%\) macro and \(49.12\%\) micro win
-    rate, with sign-test \(p=0.726\) &
-    The profile is extracted before the holdout split, synthetic pairs are
-    assumed to be preferences, and there is no adapter-only test arm \\
-    \path{/fsx/xzhichao/workspace/oocso} &
-    GRPO, hint-conditioned OPD, replay behavior cloning, and optimizer updates &
-    The current three-user run is incomplete; an older result file uses a
-    different configuration &
-    The present offline phase uses scalar-reward GRPO rather than OPD, and no
-    complete current run establishes an offline-to-online gain \\
+    Chronological split &
+    SPRInG orders each user's records over five periods and uses the earlier
+    \(90\%\) of each period for updating and the later \(10\%\) for evaluation
+    \cite{kim2026spring}. &
+    Inherited evaluation design \\
+    Compare context and adapters &
+    OPPU compares retrieval, profile prompting, and per-user PEFT
+    \cite{tan2024oppu}.  SPRInG reports component ablations for adapter and
+    retrieval paths. &
+    Inherited comparison requirement \\
+    Test context against parameter absorption &
+    EvolveR keeps retrieved experience loss-masked in its main method and
+    reports a separate unmasked absorption ablation \cite{wu2025evolver}. &
+    Motivation; the paired selection rule is proposed \\
+    Measure task success &
+    EvolveR uses final-answer correctness as its outcome reward.  In this
+    project, completing the task is part of the personalized-agent definition. &
+    Required outcome, not a borrowed algorithm \\
+    Safety gate &
+    SPRInG discusses harmful drift, poisoning, and safety filtering only as
+    future work. &
+    Not part of the core method \\
+    Confidence intervals &
+    SPRInG reports multi-seed results, \(p\)-values, and paired-bootstrap
+    confidence intervals. &
+    Result reporting only, not an update rule \\
+    Rollback &
+    The closest papers do not implement a rollback procedure. &
+    Omitted from the core method \\
     \bottomrule
   \end{tabularx}
 \end{table}
-
-The DPO result does not show a reliable training gain.  It also does not prove
-that user adapters cannot work.  The comparison tested trained-plus-profile
-against base-plus-profile, so it did not isolate what the adapter learned.
-
-OOCSO already implements ``teacher sees a hint, student does not.''  A future
-paper can use OPD as a training backend, but cannot present that mechanism as
-new.
 
 \section{Why Not Use a Prompt for Everything?}
 
@@ -190,8 +200,8 @@ Test an adapter when the preference:
 
 An adapter may reduce repeated prompt cost and make the behavior more
 consistent.  It also introduces training cost, forgetting risk, broader
-behavior changes, and rollback work.  These costs make \(\adapter\) an
-empirical choice rather than a default.
+behavior changes, and model-management work.  These costs make \(\adapter\)
+an empirical choice rather than a default.
 
 \section{Closest Prior Work}
 
@@ -223,7 +233,7 @@ contains:
 Thus, ``combine memory and an adapter'' is not new.  SPRInG chooses training
 examples through likelihood drift, then retains post-update residuals.  It
 does not train matched context and adapter candidates from the same evidence
-and select between them using later task success and safety.
+and select between them using later personalization and task success.
 
 SPRInG simulates sequential updates with chronological LongLaMP records.  It
 personalizes text generation.  It does not execute tool-based agent tasks or
@@ -287,11 +297,6 @@ when privacy and local inference matter.
     Private local context &
     No parameter update &
     No \\
-    OOCSO / OPD &
-    Per-user LoRA &
-    Training hints &
-    Implemented in simulation &
-    Simulated rewards \\
     Proposed test &
     Per-user adapter when accepted &
     Editable memory otherwise &
@@ -319,29 +324,25 @@ when privacy and local inference matter.
     ablation &
     Distilled principles are retrieved as context &
     Training reward; no per-evidence storage decision \\
-    OOCSO / OPD &
-    The no-hint student learns from a hint-conditioned teacher &
-    Hints supervise training but are not a matched deployed memory arm &
-    Reward-driven update; no context-versus-adapter activation test \\
     Proposed test &
     One candidate adapter is trained from eligible evidence &
     A matched candidate stores the same evidence as context &
-    Later tasks must favor the adapter and pass task and safety constraints \\
+    Later tasks must favor the adapter on personalization without reducing
+    task success \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
 \paragraph{What is not new.}
 Per-user LoRA, personalized DPO, continual adapter updates, retrieval plus
-parameters, hint distillation, and context-versus-parameter ablations all
-exist.
+parameters, and context-versus-parameter ablations all exist.
 
 \paragraph{What may remain distinct.}
 The tentative difference is an evidence-level, matched comparison.  The same
 evidence creates a context candidate and an adapter candidate from the same
 parent checkpoint.  Later chronological tasks decide where the evidence
-should live.  The adapter is accepted only when its advantage over context is
-large enough and task and safety scores do not regress.
+should live.  The adapter is preferred only when it improves personalization
+and does not reduce task success relative to context.
 
 \paragraph{Current verdict.}
 This is a defensible research hypothesis, not yet a publication novelty claim.
@@ -355,20 +356,18 @@ method performs this paired placement and constrained activation procedure.
 For user \(u\) at time \(t\), the active state is
 \begin{equation}
   S_u^{(t)} =
-  \left(\baseparams,\adapter^{(t)},\memory^{(t)},c_t\right),
+  \left(\baseparams,\adapter^{(t)},\memory^{(t)}\right),
 \end{equation}
-where \(c_t\) identifies the active checkpoint.  The frozen base parameters
-are \(\baseparams\), the user adapter is \(\adapter^{(t)}\), and the editable
-memory is \(\memory^{(t)}\).
+where \(\baseparams\) are frozen base parameters, \(\adapter^{(t)}\) is the
+user adapter, and \(\memory^{(t)}\) is editable memory.
 
 Each evidence record is
 \begin{equation}
-  e_i=(u,t_i,x_i,\tau_i,y_i,f_i,o_i,p_i).
+  e_i=(u,t_i,x_i,\tau_i,y_i,f_i,o_i).
 \end{equation}
 Here \(x_i\) is the task, \(\tau_i\) is the agent trajectory, \(y_i\) is the
-final answer, \(f_i\) is user feedback, \(o_i\) is the environment outcome,
-and \(p_i\) records provenance.  Evidence cannot train a model when the user,
-task, outcome, or generating checkpoint is unknown.
+final answer, \(f_i\) is user feedback, and \(o_i\) is the environment
+outcome.
 
 \subsection{Matched candidates}
 
@@ -390,9 +389,8 @@ same active state.
   \qquad
   M_{u,\mathrm{par}}=\memory^{(t)}.
 \end{equation}
-The training backend may be SFT, DPO, or OPD.  These are inherited
-components.  The adapter candidate is evaluated without adding the new
-evidence to its prompt.
+The adapter candidate uses a fixed, predeclared personalized-training method.
+It is evaluated without adding the new evidence to its prompt.
 
 \subsection{Activation rule}
 
@@ -401,59 +399,43 @@ final test period.  Evaluate the context candidate \(m_{\mathrm{ctx}}\), the
 adapter candidate \(m_{\mathrm{par}}\), and the current model \(m_0\) under the
 same decoding settings.
 
-Define the paired personalization difference
+The adapter candidate dominates the context candidate when
 \begin{equation}
-  D_{\mathrm{pref}} =
-  \prefscore(m_{\mathrm{par}};V_t)
-  -
-  \prefscore(m_{\mathrm{ctx}};V_t).
-\end{equation}
-Activate the adapter only if
-\begin{align}
-  \operatorname{LCB}(D_{\mathrm{pref}}) &> \delta, \label{eq:prefgate}\\
-  \operatorname{LCB}\!\left(
+  m_{\mathrm{par}} \succ m_{\mathrm{ctx}}
+  \quad\Longleftrightarrow\quad
+  \begin{cases}
+    \prefscore(m_{\mathrm{par}};V_t)
+      > \prefscore(m_{\mathrm{ctx}};V_t),\\
     \taskscore(m_{\mathrm{par}};V_t)
-    -
-    \taskscore(m_0;V_t)
-  \right) &\ge -\epsilon, \label{eq:taskgate}\\
-  \safescore(m_{\mathrm{par}};V_t)
-    &\ge \safescore(m_0;V_t). \label{eq:safetygate}
-\end{align}
-The lower confidence bound (LCB) prevents a small noisy difference from
-triggering an update.  Equation~\eqref{eq:taskgate} is a non-inferiority test:
-task success may fall by at most the predeclared margin \(\epsilon\).
-
-If the adapter fails, use context only when context improves personalization
-without reducing task or safety scores.  Otherwise, keep the evidence pending,
-ask the user for clarification, or make no change.  The procedure never forces
-every record into memory or weights.
+      \ge \taskscore(m_{\mathrm{ctx}};V_t).
+  \end{cases}
+  \label{eq:dominance}
+\end{equation}
+This is a proposed Pareto rule, not a result inherited from prior work.  If the
+adapter does not dominate, retain the context candidate.  If the evidence is
+contradictory or insufficient, make no placement decision.  Confidence
+intervals may accompany the reported comparison, but they are not part of the
+selection rule.
 
 \begin{algorithm}[ht]
-\caption{Paired evidence placement and conservative activation}
+\caption{Reference-grounded paired evidence placement test}
 \label{alg:placement}
 \KwIn{Active state \(S_u^{(t)}\), new evidence \(E_t\), later validation
-window \(V_t\), thresholds \(\delta,\epsilon\)}
+window \(V_t\)}
 \KwOut{Versioned next state \(S_u^{(t+1)}\)}
-Check user identity, time, task outcome, feedback, and checkpoint provenance\;
-Remove unsupported, contradictory, unsafe, or task-failing records\;
+Check user identity, time, task, feedback, and task outcome\;
 \If{eligible evidence is insufficient}{
-  keep the active state and record a pending decision\;
+  keep the active state\;
   \Return \(S_u^{(t)}\)\;
 }
 Build \(m_{\mathrm{ctx}}\) by storing \(E_t\) as editable context\;
-Build \(m_{\mathrm{par}}\) by training a child adapter on the same \(E_t\)\;
+Build \(m_{\mathrm{par}}\) by training an adapter on the same \(E_t\)\;
 Evaluate \(m_0\), \(m_{\mathrm{ctx}}\), and \(m_{\mathrm{par}}\) on the same \(V_t\)\;
-\eIf{Eqs.~\eqref{eq:prefgate} to \eqref{eq:safetygate} pass}{
-  activate the child adapter and save \(m_0\) as the rollback target\;
+\eIf{\(m_{\mathrm{par}} \succ m_{\mathrm{ctx}}\) under Eq.~\eqref{eq:dominance}}{
+  select the adapter candidate\;
 }{
-  \eIf{the context candidate improves personalization and passes task and
-  safety checks}{
-    activate the context candidate\;
-  }{
-    make no change or ask the user to clarify\;
-  }
+  select the context candidate\;
 }
-Write the data boundary, metrics, parent, child, and decision to the ledger\;
 \Return the versioned next state\;
 \end{algorithm}
 
@@ -470,8 +452,7 @@ Split whole sessions before extracting a profile or generating training data:
 \end{equation}
 The order symbol means ``occurs earlier than.''  The profile, memory, hints,
 preference pairs, and adapter may use only the records available at that time.
-The final test period remains untouched until the method and thresholds are
-fixed.
+The final test period remains untouched until the method is fixed.
 
 \subsection{Required arms}
 
@@ -496,8 +477,6 @@ fixed.
     Does direct offline per-user training suffice? \\
     SPRInG &
     Does likelihood-based selective adaptation plus retrieval suffice? \\
-    OOCSO-style OPD &
-    Does hint distillation improve later no-hint behavior? \\
     CoSteer, when deployment permits &
     Can tuning-free local steering avoid a parameter update? \\
     Paired placement test &
@@ -512,13 +491,9 @@ Do not combine all outcomes into one score.  Report:
 \begin{itemize}
   \item preference match on future sessions;
   \item environment-verified task success;
-  \item safety violations and invalid actions;
-  \item unrelated-task regression;
-  \item adaptation speed after a real preference change;
-  \item forgetting after later updates;
   \item prompt tokens, training cost, and inference cost;
-  \item update count, rejection count, and rollback count; and
-  \item uncertainty intervals over users and tasks.
+  \item results for each user and task family; and
+  \item uncertainty intervals as evaluation reporting.
 \end{itemize}
 
 Pairwise judges must allow ties and invalid outputs.  A style judge cannot
@@ -529,28 +504,21 @@ general personalization method.
 
 The shortest credible path is:
 \begin{enumerate}
-  \item Split the offline DPO conversations by time before profile extraction.
-  \item Add base, base-plus-profile, adapter-only, and
-  adapter-plus-profile evaluation arms.
-  \item Verify every synthetic pair with separate preference, task, and safety
-  checks.
-  \item Reproduce one clean offline result.
-  \item Finish one current OOCSO run with fixed configuration and complete
-  checkpoint lineage.
-  \item Add the evidence ledger and the two matched candidates around the
-  existing SFT, DPO, or OPD backend.
-  \item Test placement on controlled stable, temporary, task-local,
-  contradictory, and drifting preferences.
-  \item Move to real tool-using agent trajectories only after the storage
-  decision works on the smaller test.
+  \item Select a time-stamped, same-user dataset and define chronological
+  update, validation, and test periods.
+  \item Implement the published prompt, retrieval, OPPU, and SPRInG baselines
+  from their papers or official repositories.
+  \item Fix one adapter-training procedure and one context-construction
+  procedure before testing placement.
+  \item Run base, context-only, adapter-only, and adapter-plus-context arms.
+  \item Run the paired placement test using the same evidence and validation
+  tasks for both candidates.
+  \item Report personalization, task success, and cost separately.
+  \item Extend to tool-using agent trajectories only after the placement result
+  is reproduced.
 \end{enumerate}
 
 \section{Final Assessment}
-
-The local projects already contain DPO, GRPO, OPD, LoRA updates, and
-evaluation drivers.  They are not data-generation-only projects.  Their
-current results do not show that a user adapter reliably improves future
-behavior.
 
 There is also no general reason to prefer \(\adapter\) over a prompt.  Prompt
 or memory is better for recent, uncertain, temporary, task-local, changing, or
@@ -559,10 +527,9 @@ behavior that transfers across tasks and works without runtime profile text.
 
 The proposed paired placement test is narrower than ``memory plus adapter.''
 It asks both representations to compete using the same evidence and later
-tasks.  SPRInG, EvolveR, and the local OPD implementation make this a plausible
-next experiment, but they also narrow the novelty claim.  The paper should
-claim a new method only after the literature audit and matched experiment both
-support that claim.
+tasks.  SPRInG and EvolveR make this a plausible next experiment, but they also
+narrow the novelty claim.  The paper should claim a new method only after the
+literature audit and matched experiment both support that claim.
 
 \begin{thebibliography}{9}
 
