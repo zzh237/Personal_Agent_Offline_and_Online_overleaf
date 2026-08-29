@@ -1,0 +1,446 @@
+% !TeX program = xelatex
+\documentclass[11pt,UTF8,fontset=fandol]{ctexart}
+
+\usepackage[margin=0.82in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,tabularx,array}
+\usepackage{float}
+\usepackage{needspace}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{enumitem}
+\usepackage{xurl}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=MidnightBlue,
+  citecolor=ForestGreen,
+  urlcolor=BrickRed,
+  pdftitle={基于离线交互历史的个性化提示词优化}
+}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\renewcommand{\arraystretch}{1.16}
+\setlength{\tabcolsep}{5pt}
+\setlist[itemize]{leftmargin=1.4em,itemsep=2pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=1.6em,itemsep=3pt,topsep=3pt}
+
+\newcommand{\history}{D_{\mathrm{hist}}}
+\newcommand{\dopt}{D_{\mathrm{opt}}}
+\newcommand{\dselect}{D_{\mathrm{select}}}
+\newcommand{\dtest}{D_{\mathrm{test}}}
+\newcommand{\prompt}{p_u}
+\newcommand{\agent}{\operatorname{FA}}
+\newcommand{\judge}{\operatorname{Judge}}
+\newcommand{\optimizer}{\operatorname{Revise}}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries 基于离线交互历史的个性化提示词优化\par}
+  \vspace{5pt}
+  {\large 冻结宿主模型，只优化每位用户的可读执行提示词\par}
+  \vspace{4pt}
+  {\small 方法设计笔记 \quad 2026 年 8 月 29 日}
+\end{center}
+
+\section{结论}
+
+可以写一个与“离线策略学习”对应的提示词版本。它不训练本地策略模型，也不修改宿主模型。它从同一位用户的历史中生成、测试并改写一份提示词：
+\begin{equation}
+  x
+  \longrightarrow
+  \agent(\prompt,x)
+  \longrightarrow y.
+\end{equation}
+
+但不能声称“此前没有人做过提示词版本”。已有工作至少覆盖了三块：
+\begin{itemize}
+  \item DSO 从历史点击等反馈学习个性化提示词策略。策略根据用户和问题选择候选提示词，宿主模型保持冻结 \cite{kiyohara2025prompt}。
+  \item AGP 自动改写用于推荐重排的用户画像生成提示词 \cite{wang2025agp}。
+  \item GEPA 根据执行轨迹和文字反馈迭代提示词 \cite{agrawal2025gepa}。
+\end{itemize}
+
+因此，新的研究点不能只是“用提示词做个性化”或“自动优化提示词”。更具体的问题是：
+\begin{quote}
+能否从一个用户的多会话智能体历史中，优化一份可读、可编辑的执行提示词，使它在后续任务中更符合该用户，同时不降低任务成功率？
+\end{quote}
+
+下面给出一个可测试的方案。它还不是经过实验验证的算法。
+
+\section{问题设定}
+
+\subsection{目标}
+
+给定用户历史 \(\history\)，学习一份文本提示词 \(\prompt\)。宿主智能体保持冻结。提示词只控制三类执行行为：
+\begin{itemize}
+  \item 何时使用当前会话的上下文；
+  \item 何时直接回答、核实信息或先追问；
+  \item 回答应直接、简短，还是分步展开。
+\end{itemize}
+
+提示词不替代任务推理。工具选择、代码执行、检索和最终回答仍由宿主智能体完成。
+
+\Needspace{0.38\textheight}
+\subsection{与离线策略版的区别}
+
+\begin{table}[H]
+  \centering
+  \caption{两个版本优化的对象不同。}
+  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}L{0.35\textwidth}Y@{}}
+    \toprule
+    项目 & 离线策略版 & 提示词版 \\
+    \midrule
+    学习对象 &
+    动作策略 \(\pi_\theta(a\mid x)\) &
+    一份文本提示词 \(\prompt\) \\
+    是否训练参数 &
+    训练本地策略模型 &
+    不训练宿主或本地策略模型 \\
+    推理方式 &
+    先选离散动作，再编译成指令 &
+    宿主直接读取带条件的提示词 \\
+    用户能否检查 &
+    只能间接检查动作分布 &
+    可以直接阅读、修改和删除 \\
+    表达能力 &
+    受固定动作空间限制 &
+    可写条件规则，但可能变长或互相冲突 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{设计原则}
+
+\begin{itemize}
+  \item \textbf{宿主冻结：}所有候选提示词使用同一个宿主模型和同一套工具。
+  \item \textbf{证据可查：}新增规则必须能指向训练侧的真实会话。
+  \item \textbf{任务优先：}个性化提高时，任务成功率不能下降。
+  \item \textbf{最终可读：}部署对象是一份普通文本，不是隐藏向量或软提示词。
+  \item \textbf{测试隔离：}最终测试会话不参与提示词生成、改写或选择。
+\end{itemize}
+
+\section{角色与符号}
+
+\begin{table}[H]
+  \centering
+  \caption{系统中的角色。}
+  \begin{tabularx}{\textwidth}{@{}L{0.22\textwidth}L{0.15\textwidth}Y@{}}
+    \toprule
+    角色 & 是否更新 & 职责 \\
+    \midrule
+    宿主智能体 \(\agent\) &
+    否 &
+    读取提示词，完成任务并生成最终回答 \\
+    提示词改写器 &
+    否 &
+    根据失败案例和文字反馈提出新提示词 \\
+    评审模型 \(\judge\) &
+    否 &
+    比较回答是否符合训练侧用户证据，并给出简短修改建议 \\
+    环境检查器 &
+    否 &
+    在可以自动验证的任务上判断是否真正完成任务 \\
+    候选库 &
+    更新文本 &
+    保存提示词、来源、分数和每次改动 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{table}[H]
+  \centering
+  \caption{主要符号。}
+  \begin{tabularx}{0.94\textwidth}{@{}L{0.25\textwidth}Y@{}}
+    \toprule
+    符号 & 含义 \\
+    \midrule
+    \(\history\) & 同一用户的完整历史 \\
+    \(\dopt\) & 生成初始提示词和改写反馈的数据 \\
+    \(\dselect\) & 选择最终提示词的数据 \\
+    \(\dtest\) & 只用于最终评测的数据 \\
+    \(p^{(t)}\) & 第 \(t\) 轮使用的提示词 \\
+    \(y(p,x)\) & 宿主在提示词 \(p\) 下对任务 \(x\) 的输出 \\
+    \(\mathcal{P}_t\) & 第 \(t\) 轮结束后的候选提示词库 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{提示词的结构}
+
+提示词沿用原策略版的三个执行维度，但把离散动作改成条件规则：
+\begin{equation}
+  p=(p_{\mathrm{context}},p_{\mathrm{information}},
+     p_{\mathrm{response}},p_{\mathrm{avoid}}).
+\end{equation}
+
+\begin{table}[H]
+  \centering
+  \caption{一份提示词包含四段。}
+  \begin{tabularx}{\textwidth}{@{}L{0.23\textwidth}Y@{}}
+    \toprule
+    段落 & 内容 \\
+    \midrule
+    上下文使用 &
+    何时参考当前会话，何时只看本轮问题，以及哪些历史不能使用 \\
+    信息获取 &
+    何时直接回答，何时先核实，何时必须追问缺失信息 \\
+    回答方式 &
+    哪些任务需要直接结论、短答或分步说明 \\
+    避免事项 &
+    用户反复拒绝的行为，以及不能覆盖的宿主安全规则 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+每条规则写成“条件 + 行为”。例如：
+\begin{quote}
+如果用户要求证明或推导，保留关键中间步骤；如果用户只要求结果，直接给出答案。
+\end{quote}
+不要只写“用户喜欢详细回答”。前一种写法说明何时生效，也减少不同偏好之间的冲突。
+
+\section{数据边界}
+
+\subsection{按会话和时间划分}
+
+先按时间排列完整会话，再按任务类别分层。默认可以使用 \(60\%/20\%/20\%\) 的优化、选择和测试划分。比例必须在运行前固定。会话不可拆开：
+\begin{equation}
+  \dopt \prec \dselect \prec \dtest.
+\end{equation}
+
+\begin{table}[H]
+  \centering
+  \caption{每部分数据的用途。}
+  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}Y@{}}
+    \toprule
+    数据 & 允许的用途 \\
+    \midrule
+    \(\dopt\) &
+    提取用户证据、生成初始提示词，并在内部轮换反馈任务和检查任务 \\
+    \(\dselect\) &
+    搜索结束后比较候选库，并选择部署版本 \\
+    \(\dtest\) &
+    最终一次评测；不能进入改写器或评审模型的上下文 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+优化任务优先使用 \(\dopt\) 中的真实问题。模拟问题只用于补足稀少类别。模拟问题必须过滤与 \(\dselect\) 和 \(\dtest\) 的近重复内容。
+
+\subsection{用户证据}
+
+从 \(\dopt\) 中提取反复出现、跨任务且仍然有效的偏好。每条证据保留会话编号和时间。改写器提出新规则时，必须列出支持它的证据编号。找不到证据的规则不进入提示词。
+
+\section{初始提示词}
+
+强推理模型先从 \(\dopt\) 生成结构化初稿：
+\begin{equation}
+  p^{(0)}=\operatorname{SummarizePreferences}(\dopt).
+\end{equation}
+
+初稿只负责整理历史，不做搜索。它是必要基线。若后续优化不能稳定超过这份初稿，就没有证据说明自动改写有帮助。
+
+\section{离线提示词优化}
+
+\subsection{生成执行结果和反馈}
+
+第 \(t\) 轮从 \(\dopt\) 选择一个按类别平衡的小批量 \(B_t\)。对每个任务 \(x\)，使用同一宿主、温度和工具设置运行当前提示词：
+\begin{equation}
+  y^{(t)}_x=\agent\!\left(p^{(t)},x\right).
+\end{equation}
+
+评审模型读取：
+\begin{itemize}
+  \item 与任务相关的训练侧用户证据；
+  \item 当前任务 \(x\)；
+  \item 宿主输出 \(y^{(t)}_x\)；
+  \item 环境检查结果（若有）。
+\end{itemize}
+
+它返回三项内容：个性化判断、任务完成判断和一句具体修改建议。修改建议必须指出哪条提示词规则造成了问题，或缺少哪条有证据支持的规则。
+
+\subsection{改写候选}
+
+改写器根据当前提示词和失败反馈生成少量候选。每个候选只改一个段落，并给出文本差异。这样可以知道是哪项修改产生了效果：
+\begin{equation}
+  \{p'_1,\ldots,p'_K\}
+  =\optimizer\!\left(p^{(t)},B_t,\text{feedback}\right).
+\end{equation}
+
+候选必须满足三个硬条件：
+\begin{itemize}
+  \item 不加入训练历史中没有支持的用户偏好；
+  \item 不删除宿主原有的安全和任务规则；
+  \item 不超过预先设定的提示词长度。
+\end{itemize}
+
+\subsection{选择规则}
+
+每轮从 \(\dopt\) 另取检查批次 \(V_t\)，并保证 \(V_t\cap B_t=\varnothing\)。候选不能在产生其反馈的同一批任务上给自己打分。各轮轮换 \(B_t\) 和 \(V_t\)，分别计算个性化效果和任务成功率：
+\begin{align}
+  U_{\mathrm{pref}}(p;V_t)
+    &=\frac{1}{|V_t|}
+      \sum_{x\in V_t}
+      J_{\mathrm{pref}}\!\left(\dopt,x,y(p,x)\right),\\
+  U_{\mathrm{task}}(p;V_t)
+    &=\frac{1}{|V_t|}
+      \sum_{x\in V_t}
+      J_{\mathrm{task}}\!\left(x,y(p,x)\right).
+\end{align}
+
+候选 \(p'\) 只有同时满足下面两项，才能替换当前提示词 \(p\)：
+\begin{equation}
+  U_{\mathrm{pref}}(p';V_t)>U_{\mathrm{pref}}(p;V_t),
+  \qquad
+  U_{\mathrm{task}}(p';V_t)\ge U_{\mathrm{task}}(p;V_t).
+\end{equation}
+
+还要按类别检查结果。不能用一个总体平均分掩盖某类任务的明显下降。若两个候选各自在不同类别更好，就都保留在候选库里，等更多选择数据后再决定。
+
+\subsection{停止}
+
+达到预先设定的运行预算，或连续若干轮没有候选通过选择规则时停止。搜索停止后，才首次用 \(\dselect\) 比较候选库并选择 \(p^\star\)。整个过程不读取 \(\dtest\)。
+
+\section{完整流程}
+
+\begin{enumerate}
+  \item 按会话、时间和任务类别划分 \(\dopt,\dselect,\dtest\)。
+  \item 从 \(\dopt\) 提取带证据编号的用户偏好。
+  \item 生成结构化初始提示词 \(p^{(0)}\)。
+  \item 在 \(\dopt\) 任务上运行宿主并收集失败反馈。
+  \item 每轮只改一个提示词段落，生成候选。
+  \item 在 \(\dopt\) 内部轮换检查批次，比较候选。
+  \item 只接受个性化更好且任务成功率不下降的候选。
+  \item 搜索结束后，用 \(\dselect\) 选择 \(p^\star\)。
+  \item 最后在 \(\dtest\) 上评测一次。
+\end{enumerate}
+
+\section{推理}
+
+部署时不再调用改写器或评审模型。系统只加载宿主和最终提示词：
+\begin{equation}
+  y=\agent\!\left(p^\star,x\right).
+\end{equation}
+
+用户可以查看、修改或删除 \(p^\star\)。代价是每次请求都要携带这份文本，因此必须单独报告提示词长度和输入 token 成本。
+
+\section{评测}
+
+\subsection{最少需要的对照}
+
+\begin{table}[H]
+  \centering
+  \caption{建议的对照系统。}
+  \begin{tabularx}{\textwidth}{@{}L{0.31\textwidth}Y@{}}
+    \toprule
+    系统 & 回答的问题 \\
+    \midrule
+    无个性化提示词 &
+    宿主自身能做到什么？ \\
+    直接提取的用户画像提示词 &
+    只整理历史是否已经足够？ \\
+    本文的优化提示词 &
+    离线改写是否超过直接提取？ \\
+    通用 GEPA 优化 &
+    改进是否来自已有提示词优化器？ \\
+    DSO 提示词策略（有日志概率时） &
+    动态选择提示词是否优于一份固定提示词？ \\
+    原离线策略版 &
+    文本提示词与参数化动作策略哪一个更有效？ \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{分开报告的指标}
+
+\begin{itemize}
+  \item 后续真实任务中的个性化符合度；
+  \item 环境可验证的任务成功率；
+  \item 各任务类别的结果和宏平均；
+  \item 提示词长度、离线调用次数、推理 token 和延迟；
+  \item 不同时间段上的偏好稳定性。
+\end{itemize}
+
+不要把这些指标压成一个总分。置信区间用于报告结果，不直接决定每次提示词改写。
+
+\section{已有工作与创新边界}
+
+\begin{table}[H]
+  \centering
+  \caption{最接近的工作已经覆盖了哪些部分。}
+  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}L{0.32\textwidth}Y@{}}
+    \toprule
+    工作 & 已经做到 & 与本方案的差别 \\
+    \midrule
+    OPPU \cite{tan2024oppu} &
+    从每位用户的历史构造画像提示词，并与检索和参数训练比较 &
+    不迭代搜索一份执行提示词 \\
+    DSO \cite{kiyohara2025prompt} &
+    从日志反馈学习按用户和问题选择候选提示词的策略 &
+    优化的是提示词选择策略；主要实验是个性化电影描述，不是多步智能体任务 \\
+    AGP \cite{wang2025agp} &
+    自动优化用于推荐重排的用户画像生成提示词 &
+    优化对象是推荐场景中的画像生成，不是通用智能体执行规则 \\
+    GEPA \cite{agrawal2025gepa} &
+    用执行轨迹和文字反馈进化提示词 &
+    默认优化任务程序，不专门建模单个用户的长期偏好 \\
+    本方案 &
+    从一位用户的多会话历史优化一份可读执行提示词 &
+    同时检查个性化和真实任务成功率 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+因此，下面这些说法不成立：
+\begin{itemize}
+  \item “首次用提示词做个性化”；
+  \item “首次从离线反馈优化提示词”；
+  \item “首次在冻结模型上学习提示词”。
+\end{itemize}
+
+可能尚未被直接覆盖的是更窄的组合：\textbf{单个用户、多会话智能体历史、一份可读执行提示词、任务成功约束、未来真实任务评测}。目前只能把它称为待验证的研究差异。正式投稿前仍需做更完整的文献检索。
+
+\section{建议先做的实验}
+
+\begin{enumerate}
+  \item 先使用现有用户历史，按会话和时间建立三段数据。
+  \item 固定宿主模型、工具、温度和最大输出长度。
+  \item 先跑“无提示词”和“直接提取提示词”。
+  \item 再实现上述单段改写和选择循环。
+  \item 用相同预算运行 GEPA，避免把已有优化器的能力算成新方法。
+  \item 与原来的 18 动作策略版做同题比较。
+  \item 只有在真实测试任务上同时改善个性化和任务成功，才继续做部署后的在线更新。
+\end{enumerate}
+
+{\footnotesize\raggedright
+\begin{thebibliography}{9}
+\setlength{\itemsep}{0pt}
+
+\bibitem{kiyohara2025prompt}
+Haruka Kiyohara et al.
+\newblock Prompt Optimization with Logged Bandit Data.
+\newblock \href{https://arxiv.org/abs/2504.02646}{arXiv:2504.02646}, 2025.
+
+\bibitem{wang2025agp}
+Chen Wang et al.
+\newblock Automating Personalization: Prompt Optimization for Recommendation
+Reranking.
+\newblock \href{https://arxiv.org/abs/2504.03965}{arXiv:2504.03965}, 2025.
+
+\bibitem{agrawal2025gepa}
+Lakshya A. Agrawal et al.
+\newblock GEPA: Reflective Prompt Evolution Can Outperform Reinforcement
+Learning.
+\newblock \href{https://arxiv.org/abs/2507.19457}{arXiv:2507.19457}, 2025.
+
+\bibitem{tan2024oppu}
+Zhaoxuan Tan et al.
+\newblock Democratizing Large Language Models via Personalized
+Parameter-Efficient Fine-Tuning.
+\newblock \href{https://aclanthology.org/2024.emnlp-main.372/}{EMNLP}, 2024.
+
+\end{thebibliography}
+}
+
+\end{document}
