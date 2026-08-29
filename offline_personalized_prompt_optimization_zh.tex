@@ -2,12 +2,10 @@
 \documentclass[11pt,UTF8,fontset=fandol]{ctexart}
 
 \usepackage[margin=0.82in]{geometry}
-\usepackage{amsmath,amssymb}
+\usepackage{amsmath,amssymb,mathtools}
 \usepackage{booktabs,tabularx,array}
-\usepackage{float}
-\usepackage{needspace}
-\usepackage[dvipsnames]{xcolor}
 \usepackage{enumitem}
+\usepackage[dvipsnames]{xcolor}
 \usepackage{xurl}
 \usepackage{hyperref}
 
@@ -16,406 +14,521 @@
   linkcolor=MidnightBlue,
   citecolor=ForestGreen,
   urlcolor=BrickRed,
-  pdftitle={基于离线交互历史的个性化提示词优化}
+  pdftitle={基于提示词动作的离线到在线个性化策略学习}
 }
 
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
-\renewcommand{\arraystretch}{1.16}
+\renewcommand{\arraystretch}{1.15}
 \setlength{\tabcolsep}{5pt}
-\setlist[itemize]{leftmargin=1.4em,itemsep=2pt,topsep=3pt}
-\setlist[enumerate]{leftmargin=1.6em,itemsep=3pt,topsep=3pt}
+\setlist[itemize]{leftmargin=1.35em,itemsep=2pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=1.55em,itemsep=3pt,topsep=3pt}
 
-\newcommand{\history}{D_{\mathrm{hist}}}
-\newcommand{\dopt}{D_{\mathrm{opt}}}
-\newcommand{\dselect}{D_{\mathrm{select}}}
-\newcommand{\dtest}{D_{\mathrm{test}}}
-\newcommand{\prompt}{p_u}
-\newcommand{\agent}{\operatorname{FA}}
-\newcommand{\judge}{\operatorname{Judge}}
-\newcommand{\optimizer}{\operatorname{Revise}}
+\newcommand{\Dhist}{D_{\mathrm{hist}}}
+\newcommand{\Dtrain}{D_{\mathrm{train}}}
+\newcommand{\Dholdout}{D_{\mathrm{holdout}}}
+\newcommand{\Xholdout}{\mathcal X_{\mathrm{holdout}}}
+\newcommand{\Xsim}{\widetilde{\mathcal X}}
+\newcommand{\policy}{\pi_{\theta}}
+\newcommand{\oldpolicy}{\pi_{\theta_{\mathrm{old}}}}
+\newcommand{\basepolicy}{\pi_{\mathrm{base}}}
+\newcommand{\FA}{\mathrm{FA}}
+\newcommand{\Judge}{\operatorname{Judge}}
+\newcommand{\clip}{\operatorname{clip}}
 
 \begin{document}
 
 \begin{center}
-  {\LARGE\bfseries 基于离线交互历史的个性化提示词优化\par}
+  {\LARGE\bfseries 基于提示词动作的离线到在线个性化策略学习\par}
   \vspace{5pt}
-  {\large 冻结宿主模型，只优化每位用户的可读执行提示词\par}
+  {\large 冻结 FA 和 Judge，只训练轻量策略\par}
   \vspace{4pt}
-  {\small 方法设计笔记 \quad 2026 年 8 月 29 日}
+  {\small 中文算法设计笔记 \quad 2026 年 8 月 29 日}
 \end{center}
 
 \section{结论}
 
-可以写一个与“离线策略学习”对应的提示词版本。它不训练本地策略模型，也不修改宿主模型。它从同一位用户的历史中生成、测试并改写一份提示词：
+可以把原方案改成提示词版本，但不能把策略改成最终回答模型。原方案的主链必须保留：
 \begin{equation}
   x
   \longrightarrow
-  \agent(\prompt,x)
-  \longrightarrow y.
+  a\sim\policy(\cdot\mid x)
+  \longrightarrow
+  \FA.\operatorname{Execute}(a,x)
+  \longrightarrow
+  y_a.
+  \label{eq:chain}
 \end{equation}
+策略仍然只决定如何执行。冻结的 FA 读取任务 \(x\) 和执行指令 \(a\)，再生成最终回答
+\(y_a\)。
 
-但不能声称“此前没有人做过提示词版本”。已有工作至少覆盖了三块：
+本版本只改两处：
 \begin{itemize}
-  \item DSO 从历史点击等反馈学习个性化提示词策略。策略根据用户和问题选择候选提示词，宿主模型保持冻结 \cite{kiyohara2025prompt}。
-  \item AGP 自动改写用于推荐重排的用户画像生成提示词 \cite{wang2025agp}。
-  \item GEPA 根据执行轨迹和文字反馈迭代提示词 \cite{agrawal2025gepa}。
+  \item \(a\) 不再是固定的三因子标签，而是一条自然语言执行指令；
+  \item \(\mathcal A\) 不再是手写的 18 个动作，而是从真实用户纠正中得到、经执行验证的指令库。
 \end{itemize}
+因此不再需要 Compiler。除此之外，\(\Dhist,\Dtrain,\Dholdout,\Xholdout,
+\Xsim,C,c,P_u,y_a,r_a,A_a,\policy,\basepolicy\)、FA 和 Judge 都保留原义。
 
-因此，新的研究点不能只是“用提示词做个性化”或“自动优化提示词”。更具体的问题是：
-\begin{quote}
-能否从一个用户的多会话智能体历史中，优化一份可读、可编辑的执行提示词，使它在后续任务中更符合该用户，同时不降低任务成功率？
-\end{quote}
+提示词优化和提示词选择已有研究，不能声称``此前没有人做过提示词版本''。较窄、仍需实验
+验证的差异是：\textbf{一个用户、冻结的黑盒 FA、由真实纠正形成的可查指令库、轻量策略
+选择指令，以及同一套离线到在线 GRPO 更新。}
 
-下面给出一个可测试的方案。它还不是经过实验验证的算法。
+\section{哪些部分不变}
 
-\section{问题设定}
+\subsection{角色}
 
-\subsection{目标}
-
-给定用户历史 \(\history\)，学习一份文本提示词 \(\prompt\)。宿主智能体保持冻结。提示词只控制三类执行行为：
-\begin{itemize}
-  \item 何时使用当前会话的上下文；
-  \item 何时直接回答、核实信息或先追问；
-  \item 回答应直接、简短，还是分步展开。
-\end{itemize}
-
-提示词不替代任务推理。工具选择、代码执行、检索和最终回答仍由宿主智能体完成。
-
-\Needspace{0.38\textheight}
-\subsection{与离线策略版的区别}
-
-\begin{table}[H]
+\begin{table}[ht]
   \centering
-  \caption{两个版本优化的对象不同。}
-  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}L{0.35\textwidth}Y@{}}
+  \caption{模型角色沿用原 PDF。}
+  \begin{tabularx}{\textwidth}{@{}L{0.22\textwidth}L{0.14\textwidth}Y@{}}
     \toprule
-    项目 & 离线策略版 & 提示词版 \\
+    角色 & 是否训练 & 职责 \\
     \midrule
-    学习对象 &
-    动作策略 \(\pi_\theta(a\mid x)\) &
-    一份文本提示词 \(\prompt\) \\
-    是否训练参数 &
-    训练本地策略模型 &
-    不训练宿主或本地策略模型 \\
-    推理方式 &
-    先选离散动作，再编译成指令 &
-    宿主直接读取带条件的提示词 \\
-    用户能否检查 &
-    只能间接检查动作分布 &
-    可以直接阅读、修改和删除 \\
-    表达能力 &
-    受固定动作空间限制 &
-    可写条件规则，但可能变长或互相冲突 \\
+    Frozen Agent（FA） &
+    否 &
+    可选地整理 \(P_u\)，构造训练问题，执行指令 \(a\)，生成最终回答 \(y_a\) \\
+    Policy \(\policy\) &
+    是 &
+    输入当前任务 \(x\)，在可用指令中选择 \(a\) \\
+    Base \(\basepolicy\) &
+    否 &
+    与 \(\policy\) 使用同一主干；关闭用户 LoRA，作为初始化和评测对照 \\
+    Judge &
+    否 &
+    根据训练侧真实历史、任务结果和可选的 \(P_u\) 给 \(y_a\) 标量分 \(r_a\) \\
+    提示词动作库 \(\mathcal A\) &
+    数据，不是模型 &
+    保存已经过验证的自然语言执行指令及其证据 \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\subsection{设计原则}
+模型参数中只有 \(\theta\) 更新。FA、Judge、\(P_u\) 和 \(\basepolicy\) 始终冻结。
+\(\mathcal A\) 是数据表；在线收到新纠正后可以增加记录，但这不等于训练另一个模型。
 
-\begin{itemize}
-  \item \textbf{宿主冻结：}所有候选提示词使用同一个宿主模型和同一套工具。
-  \item \textbf{证据可查：}新增规则必须能指向训练侧的真实会话。
-  \item \textbf{任务优先：}个性化提高时，任务成功率不能下降。
-  \item \textbf{最终可读：}部署对象是一份普通文本，不是隐藏向量或软提示词。
-  \item \textbf{测试隔离：}最终测试会话不参与提示词生成、改写或选择。
-\end{itemize}
+\subsection{符号逐项对应}
 
-\section{角色与符号}
-
-\begin{table}[H]
+\begin{table}[ht]
   \centering
-  \caption{系统中的角色。}
-  \begin{tabularx}{\textwidth}{@{}L{0.22\textwidth}L{0.15\textwidth}Y@{}}
-    \toprule
-    角色 & 是否更新 & 职责 \\
-    \midrule
-    宿主智能体 \(\agent\) &
-    否 &
-    读取提示词，完成任务并生成最终回答 \\
-    提示词改写器 &
-    否 &
-    根据失败案例和文字反馈提出新提示词 \\
-    评审模型 \(\judge\) &
-    否 &
-    比较回答是否符合训练侧用户证据，并给出简短修改建议 \\
-    环境检查器 &
-    否 &
-    在可以自动验证的任务上判断是否真正完成任务 \\
-    候选库 &
-    更新文本 &
-    保存提示词、来源、分数和每次改动 \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
-
-\begin{table}[H]
-  \centering
-  \caption{主要符号。}
-  \begin{tabularx}{0.94\textwidth}{@{}L{0.25\textwidth}Y@{}}
+  \caption{原符号在本版本中的含义。}
+  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}Y@{}}
     \toprule
     符号 & 含义 \\
     \midrule
-    \(\history\) & 同一用户的完整历史 \\
-    \(\dopt\) & 生成初始提示词和改写反馈的数据 \\
-    \(\dselect\) & 选择最终提示词的数据 \\
-    \(\dtest\) & 只用于最终评测的数据 \\
-    \(p^{(t)}\) & 第 \(t\) 轮使用的提示词 \\
-    \(y(p,x)\) & 宿主在提示词 \(p\) 下对任务 \(x\) 的输出 \\
-    \(\mathcal{P}_t\) & 第 \(t\) 轮结束后的候选提示词库 \\
+    \(\Dhist\) &
+    同一用户按时间排列的完整历史 \\
+    \(\Dtrain,\Dholdout\) &
+    按完整会话和时间切开的训练历史与保留历史 \\
+    \(\Xholdout\) &
+    只用于最终评测的真实用户问题 \\
+    \(\Xsim\) &
+    只由训练侧信息构造的训练任务 \\
+    \(C,c\) &
+    预先固定的任务类别集合及单个类别 \\
+    \(P_u\) &
+    只从 \(\Dtrain\) 提取并冻结的可选用户偏好摘要 \\
+    \(a\) &
+    交给 FA 的自然语言执行指令，不是最终回答 \\
+    \(\mathcal A\) &
+    当前用户的已验证执行指令集合，不再固定为 18 个 \\
+    \(y_a\) &
+    FA 在任务 \(x\) 下执行指令 \(a\) 后的回答 \\
+    \(r_a\) &
+    Judge 对 \(y_a\) 的标量分 \\
+    \(A_a=r_a-\bar r\) &
+    同一任务内的组相对优势 \\
+    \(\policy(a\mid x)\) &
+    可训练的提示词动作策略 \\
+    \(\basepolicy\) &
+    关闭 LoRA 后的冻结基础策略 \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\section{提示词的结构}
+\section{为什么选择指令库}
 
-提示词沿用原策略版的三个执行维度，但把离散动作改成条件规则：
-\begin{equation}
-  p=(p_{\mathrm{context}},p_{\mathrm{information}},
-     p_{\mathrm{response}},p_{\mathrm{avoid}}).
-\end{equation}
+提示词动作有三种直接做法：
+\begin{itemize}
+  \item \textbf{自由生成：}策略每次写一条新指令。表达力强，但容易加入用户从未说过的偏好，
+    也很难审计。
+  \item \textbf{适配器库：}策略选择一个参数适配器。它不再是提示词版本，也不适合只能通过
+    API 调用的冻结 FA。
+  \item \textbf{已验证指令库：}每条指令来自真实纠正，保存来源，并先经过 FA 和 Judge
+    验证。策略只在这些指令中选择。
+\end{itemize}
 
-\begin{table}[H]
-  \centering
-  \caption{一份提示词包含四段。}
-  \begin{tabularx}{\textwidth}{@{}L{0.23\textwidth}Y@{}}
-    \toprule
-    段落 & 内容 \\
-    \midrule
-    上下文使用 &
-    何时参考当前会话，何时只看本轮问题，以及哪些历史不能使用 \\
-    信息获取 &
-    何时直接回答，何时先核实，何时必须追问缺失信息 \\
-    回答方式 &
-    哪些任务需要直接结论、短答或分步说明 \\
-    避免事项 &
-    用户反复拒绝的行为，以及不能覆盖的宿主安全规则 \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
+本文采用第三种。它最接近原来的离散动作策略，也保留了黑盒 FA 的边界。它只是一个候选
+方法，不表示提示词一定优于参数适配器。
 
-每条规则写成“条件 + 行为”。例如：
+\section{提示词动作空间}
+
+\subsection{一条动作是什么}
+
+每条 \(a\in\mathcal A\) 是可以直接放进 FA system message 的短指令。例如，当前
+OOCSO 诊断样本中的纠正是：
 \begin{quote}
-如果用户要求证明或推导，保留关键中间步骤；如果用户只要求结果，直接给出答案。
+别整这些花里胡哨的格式啊，你就老老实实说人话重写一遍呗。
 \end{quote}
-不要只写“用户喜欢详细回答”。前一种写法说明何时生效，也减少不同偏好之间的冲突。
+可以从中提出候选指令：
+\begin{quote}
+使用普通中文短句；不要加粗、编号或小标题。
+\end{quote}
+后一句只有在回放原任务后确实改善回答，才进入 \(\mathcal A\)。指令必须描述执行方式，
+不能泄露任务答案，也不能替代 FA 完成任务。
 
-\section{数据边界}
+每条库记录至少包含：
+\begin{center}
+\small
+\begin{tabularx}{0.94\textwidth}{@{}L{0.23\textwidth}Y@{}}
+  \toprule
+  字段 & 内容 \\
+  \midrule
+  \texttt{instruction} & 交给 FA 的指令文本，即动作 \(a\) \\
+  \texttt{scope} & \texttt{global} 或适用的任务类别 \(c\) \\
+  \texttt{evidence\_ids} & 支持这条指令的 \(\Dtrain\) 会话和轮次 \\
+  \texttt{validation\_ids} & 已完成执行验证的训练任务 \\
+  \texttt{status} & 只有 \texttt{validated} 才能进入策略候选集 \\
+  \bottomrule
+\end{tabularx}
+\end{center}
 
-\subsection{按会话和时间划分}
+指令库总是包含空动作 \(a_{\varnothing}\)。它不添加个性化指令，用来判断个性化是否真的
+有帮助。
 
-先按时间排列完整会话，再按任务类别分层。默认可以使用 \(60\%/20\%/20\%\) 的优化、选择和测试划分。比例必须在运行前固定。会话不可拆开：
+\subsection{从真实纠正建立动作}
+
+只使用 \(\Dtrain\)：
+\begin{enumerate}
+  \item 找到用户明确要求修改，且修改后回答被接受的轮次。
+  \item 冻结 FA 把用户原话整理成一条短执行指令。它只能删去题目内容和重复文字，不能补充
+    新偏好。
+  \item 在纠正前的任务 \(x\) 上运行空动作和候选动作，得到两个 FA 回答。
+  \item Judge 读取同一段训练侧证据并比较两个回答。有确定性任务检查器时，Judge 也读取
+    任务是否成功。
+  \item 只有候选动作改善偏好且不破坏任务完成时，才标为 \texttt{validated}。
+\end{enumerate}
+
+空反馈、未闭合思考块导致的空文本、少于一个完整要求的 hint，以及纠正后仍不满意的记录
+全部丢弃。当前数据里出现过只剩``和''的损坏 hint；它不能成为动作。
+
+\subsection{当前任务的候选集}
+
+每条指令在入库时已有适用范围。对类别为 \(c(x)\) 的任务，
 \begin{equation}
-  \dopt \prec \dselect \prec \dtest.
+  \mathcal A_x
+  =
+  \{a_{\varnothing}\}
+  \cup
+  \{a\in\mathcal A:
+    \operatorname{scope}(a)=\texttt{global}
+    \ \text{或}\ c(x)\in\operatorname{scope}(a)\}.
+  \label{eq:candidates}
 \end{equation}
+首个实验直接枚举 \(\mathcal A_x\)。只有库变得很大后，才加入固定的检索上限。检索规则
+必须在评测前锁定，不能读取 \(\Dholdout\)。
 
-\begin{table}[H]
-  \centering
-  \caption{每部分数据的用途。}
-  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}Y@{}}
-    \toprule
-    数据 & 允许的用途 \\
-    \midrule
-    \(\dopt\) &
-    提取用户证据、生成初始提示词，并在内部轮换反馈任务和检查任务 \\
-    \(\dselect\) &
-    搜索结束后比较候选库，并选择部署版本 \\
-    \(\dtest\) &
-    最终一次评测；不能进入改写器或评审模型的上下文 \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
+\section{策略模型}
 
-优化任务优先使用 \(\dopt\) 中的真实问题。模拟问题只用于补足稀少类别。模拟问题必须过滤与 \(\dselect\) 和 \(\dtest\) 的近重复内容。
+\subsection{参数}
 
-\subsection{用户证据}
+\(\policy\) 使用当前 OOCSO 已配置的
+\texttt{Qwen/Qwen3-4B-Thinking-2507}。每位用户有一个 LoRA：
+\[
+  r=16,\qquad
+  \alpha=32,\qquad
+  \text{target}=
+  \{\texttt{q\_proj},\texttt{k\_proj},
+    \texttt{v\_proj},\texttt{o\_proj}\}.
+\]
+当前 \texttt{preview\_pi0\_student.pt} 有 288 个 LoRA 张量，共
+\(11{,}796{,}480\) 个参数。该文件只能说明当前代码已经能保存适配器，不能证明本文算法
+已实现。
 
-从 \(\dopt\) 中提取反复出现、跨任务且仍然有效的偏好。每条证据保留会话编号和时间。改写器提出新规则时，必须列出支持它的证据编号。找不到证据的规则不进入提示词。
+\subsection{输入}
 
-\section{初始提示词}
+策略输入仍然只有 \(x\)。序列化格式固定为：
+\begin{quote}
+\texttt{[TASK\_STATE]}\par
+当前 system message、用户任务、已经发生的工具返回和对话状态\par
+\texttt{[/TASK\_STATE]}\par
+\texttt{[EXECUTION\_INSTRUCTION]}
+\end{quote}
+评测第一次回答时，\(x\) 不包含当前任务尚未发生的用户纠正。用户偏好存于该用户的 LoRA
+和已验证动作库中。\(P_u\) 不拼进策略输入。
 
-强推理模型先从 \(\dopt\) 生成结构化初稿：
+\subsection{输出和候选打分}
+
+输出是动作文本 \(a=(t_1,\ldots,t_{L_a})\)，不是回答。对每个
+\(a\in\mathcal A_x\)，用 teacher forcing 计算长度归一化分数：
 \begin{equation}
-  p^{(0)}=\operatorname{SummarizePreferences}(\dopt).
+  s_{\theta}(a,x)
+  =
+  \frac{1}{L_a}
+  \sum_{j=1}^{L_a}
+  \log p_{\theta}
+  \left(t_j\mid
+    \operatorname{Serialize}(x),t_{<j}\right).
+  \label{eq:sequence-score}
 \end{equation}
-
-初稿只负责整理历史，不做搜索。它是必要基线。若后续优化不能稳定超过这份初稿，就没有证据说明自动改写有帮助。
-
-\section{离线提示词优化}
-
-\subsection{生成执行结果和反馈}
-
-第 \(t\) 轮从 \(\dopt\) 选择一个按类别平衡的小批量 \(B_t\)。对每个任务 \(x\)，使用同一宿主、温度和工具设置运行当前提示词：
+空动作使用固定 token \texttt{<NO\_PERSONAL\_INSTRUCTION>} 参与打分，传给 FA 时再还原为
+空字符串。候选上的策略分布为
 \begin{equation}
-  y^{(t)}_x=\agent\!\left(p^{(t)},x\right).
+  \policy(a\mid x)
+  =
+  \frac{\exp(s_{\theta}(a,x)/T)}
+       {\sum_{a'\in\mathcal A_x}
+        \exp(s_{\theta}(a',x)/T)}.
+  \label{eq:policy}
 \end{equation}
+\(\basepolicy\) 使用同一公式和同一动作库，但关闭 LoRA。这样两条评测链只差训练过的
+策略参数。
 
-评审模型读取：
+\section{离线算法}
+
+\subsection{数据切分}
+
+先按完整会话和时间把 \(\Dhist\) 切成 \(\Dtrain\) 和 \(\Dholdout\)。一个会话不能拆到
+两边。任务类别 \(C\) 和比例在运行前固定。只有 \(\Dtrain\) 可以用于：
 \begin{itemize}
-  \item 与任务相关的训练侧用户证据；
-  \item 当前任务 \(x\)；
-  \item 宿主输出 \(y^{(t)}_x\)；
-  \item 环境检查结果（若有）。
+  \item 建立 \(\mathcal A\)；
+  \item 提取可选的 \(P_u\)；
+  \item 构造 \(\Xsim\)；
+  \item 给 Judge 提供偏好证据；
+  \item 训练 \(\policy\)。
 \end{itemize}
+\(\Dholdout\) 和 \(\Xholdout\) 不得进入以上任何一步。
 
-它返回三项内容：个性化判断、任务完成判断和一句具体修改建议。修改建议必须指出哪条提示词规则造成了问题，或缺少哪条有证据支持的规则。
+\subsection{执行与打分}
 
-\subsection{改写候选}
-
-改写器根据当前提示词和失败反馈生成少量候选。每个候选只改一个段落，并给出文本差异。这样可以知道是哪项修改产生了效果：
+对每个 \(x\in\Xsim\)，枚举或从 \(\mathcal A_x\) 采样 \(K\) 条指令。每条指令都通过同一个
+冻结 FA：
 \begin{equation}
-  \{p'_1,\ldots,p'_K\}
-  =\optimizer\!\left(p^{(t)},B_t,\text{feedback}\right).
+  y_a=\FA.\operatorname{Execute}(a,x).
+  \label{eq:execute}
 \end{equation}
+这里没有 Compiler。动作文本 \(a\) 直接进入 FA。
 
-候选必须满足三个硬条件：
-\begin{itemize}
-  \item 不加入训练历史中没有支持的用户偏好；
-  \item 不删除宿主原有的安全和任务规则；
-  \item 不超过预先设定的提示词长度。
-\end{itemize}
-
-\subsection{选择规则}
-
-每轮从 \(\dopt\) 另取检查批次 \(V_t\)，并保证 \(V_t\cap B_t=\varnothing\)。候选不能在产生其反馈的同一批任务上给自己打分。各轮轮换 \(B_t\) 和 \(V_t\)，分别计算个性化效果和任务成功率：
-\begin{align}
-  U_{\mathrm{pref}}(p;V_t)
-    &=\frac{1}{|V_t|}
-      \sum_{x\in V_t}
-      J_{\mathrm{pref}}\!\left(\dopt,x,y(p,x)\right),\\
-  U_{\mathrm{task}}(p;V_t)
-    &=\frac{1}{|V_t|}
-      \sum_{x\in V_t}
-      J_{\mathrm{task}}\!\left(x,y(p,x)\right).
-\end{align}
-
-候选 \(p'\) 只有同时满足下面两项，才能替换当前提示词 \(p\)：
+Judge 读取训练侧真实证据、任务 \(x\)、回答 \(y_a\)，以及可选的冻结摘要 \(P_u\)：
 \begin{equation}
-  U_{\mathrm{pref}}(p';V_t)>U_{\mathrm{pref}}(p;V_t),
+  r_a
+  =
+  \Judge(\Dtrain,x,y_a;P_u).
+  \label{eq:reward}
+\end{equation}
+对工具任务，确定性检查器的成功或失败也放进 Judge 输入。Judge 仍只输出一个固定范围的
+标量 \(r_a\)。同一 \(x\) 下的所有回答必须使用同一个 Judge 提示和同一套 FA 参数。
+
+\subsection{组相对优势}
+
+\begin{equation}
+  \bar r
+  =
+  \frac{1}{K}\sum_{a\in\mathcal A_x^{(K)}}r_a,
   \qquad
-  U_{\mathrm{task}}(p';V_t)\ge U_{\mathrm{task}}(p;V_t).
+  A_a=r_a-\bar r.
+  \label{eq:advantage}
 \end{equation}
+若所有动作得分相同，该组不产生梯度。不要为制造优势而改 Judge 分数。
 
-还要按类别检查结果。不能用一个总体平均分掩盖某类任务的明显下降。若两个候选各自在不同类别更好，就都保留在候选库里，等更多选择数据后再决定。
+\subsection{GRPO 更新}
 
-\subsection{停止}
+收集动作时保存 \(\oldpolicy(a\mid x)\)。更新时计算
+\begin{equation}
+  \rho_a(\theta)
+  =
+  \frac{\policy(a\mid x)}
+       {\oldpolicy(a\mid x)}.
+\end{equation}
+使用原方案的 clipped GRPO：
+\begin{equation}
+  \mathcal L_{\mathrm{GRPO}}(\theta)
+  =
+  -\mathbb E_x
+  \left[
+  \frac{1}{K}
+  \sum_a
+  \min\left(
+    \rho_a A_a,\,
+    \clip(\rho_a,1-\epsilon,1+\epsilon)A_a
+  \right)
+  \right]
+  -\beta H\!\left(\policy(\cdot\mid x)\right).
+  \label{eq:grpo}
+\end{equation}
+优化器只更新 LoRA 参数 \(\theta\)。FA 和 Judge 的 token 概率不进入损失。
 
-达到预先设定的运行预算，或连续若干轮没有候选通过选择规则时停止。搜索停止后，才首次用 \(\dselect\) 比较候选库并选择 \(p^\star\)。整个过程不读取 \(\dtest\)。
-
-\section{完整流程}
+\subsection{离线工作流}
 
 \begin{enumerate}
-  \item 按会话、时间和任务类别划分 \(\dopt,\dselect,\dtest\)。
-  \item 从 \(\dopt\) 提取带证据编号的用户偏好。
-  \item 生成结构化初始提示词 \(p^{(0)}\)。
-  \item 在 \(\dopt\) 任务上运行宿主并收集失败反馈。
-  \item 每轮只改一个提示词段落，生成候选。
-  \item 在 \(\dopt\) 内部轮换检查批次，比较候选。
-  \item 只接受个性化更好且任务成功率不下降的候选。
-  \item 搜索结束后，用 \(\dselect\) 选择 \(p^\star\)。
-  \item 最后在 \(\dtest\) 上评测一次。
+  \item 切分 \(\Dhist\)，冻结 \(\Dholdout\) 和 \(\Xholdout\)。
+  \item 从 \(\Dtrain\) 的真实纠正建立并验证 \(\mathcal A\)。
+  \item 可选地从 \(\Dtrain\) 提取一次 \(P_u\)，随后冻结。
+  \item 从训练侧任务构造 \(\Xsim\)，并过滤与 holdout 的近重复。
+  \item 对每个 \(x\) 形成 \(\mathcal A_x\)，通过 FA 得到 \(y_a\)。
+  \item Judge 给出 \(r_a\)，计算 \(A_a\)。
+  \item 用式~\eqref{eq:grpo} 更新 \(\policy\)，得到离线策略 \(\pi_0\)。
 \end{enumerate}
+
+\section{在线算法}
+
+部署从离线策略 \(\pi_0\) 和同一动作库开始。每次任务仍按式~\eqref{eq:chain} 执行。
+在线数据分两类处理：
+\begin{itemize}
+  \item 用户满意或任务成功：保存该次 \((x,a,y_a,r_a)\)，用于后续组相对更新；
+  \item 用户明确纠正：从用户原话提出一个新动作候选，但不能直接加入 \(\mathcal A\)。
+\end{itemize}
+
+新候选先经过三项检查：
+\begin{enumerate}
+  \item 它能指向当前在线纠正，且没有加入用户未表达的要求；
+  \item 在当前任务上重新运行 FA 后，Judge 分数提高且任务仍成功；
+  \item 在一小批已通过的训练侧回放任务上，不造成明显退化。
+\end{enumerate}
+通过后，候选成为 \(\mathcal A\) 的新记录。然后在包含新动作、当前动作、空动作和若干旧动作
+的组内重新执行、打分，并继续使用式~\eqref{eq:grpo}。在线阶段没有第二套训练目标。
+\(\Dholdout\) 和 \(\Xholdout\) 始终不可见。
 
 \section{推理}
 
-部署时不再调用改写器或评审模型。系统只加载宿主和最终提示词：
-\begin{equation}
-  y=\agent\!\left(p^\star,x\right).
-\end{equation}
+对新任务 \(x\)：
+\begin{enumerate}
+  \item 按式~\eqref{eq:candidates} 得到 \(\mathcal A_x\)；
+  \item 按式~\eqref{eq:policy} 计算动作分布；
+  \item 评测时取 \(a^\star=\arg\max_a\policy(a\mid x)\)，交互时也可采样；
+  \item 运行 \(y_{a^\star}=\FA.\operatorname{Execute}(a^\star,x)\)；
+  \item 返回 \(y_{a^\star}\)。
+\end{enumerate}
 
-用户可以查看、修改或删除 \(p^\star\)。代价是每次请求都要携带这份文本，因此必须单独报告提示词长度和输入 token 成本。
+默认不把 \(P_u\) 再拼进 FA。这样可把效果归因于动作策略，而不是额外的完整用户画像提示。
+\(P_u\) 仍可作为单独基线。
+
+\section{与 OOCSO 数据的对应}
+
+\begin{table}[ht]
+  \centering
+  \caption{OOCSO \texttt{data} 目录中各文件的实际用途。}
+  \begin{tabularx}{\textwidth}{@{}L{0.28\textwidth}L{0.20\textwidth}Y@{}}
+    \toprule
+    文件 & 对应位置 & 当前边界 \\
+    \midrule
+    \path{preview_pipeline.json} &
+    \(\Dhist\) 流程样本 &
+    只有 4 个偏好任务、2 条离线线程和 3 条在线记录，只能做单元测试 \\
+    \path{dump_samples.json} &
+    纠正样本 &
+    只有 3 条离线和 2 条在线诊断会话；包含真实失败模式，但不是完整历史 \\
+    \path{tasks_train.jsonl} &
+    \(\Xsim\) 与在线训练流 &
+    120 个工具任务；当前代码用 0--79 做离线，80--119 做在线 \\
+    \path{tasks_dev.jsonl} &
+    开发检查 &
+    30 个任务，只能用于调试和选参 \\
+    \path{tasks_eval.jsonl} &
+    任务成功 holdout &
+    30 个工具任务，可检查任务完成，不能替代真实个性化 \(\Xholdout\) \\
+    \path{preview_pi0_student.pt} &
+    \(\pi_0\) 文件格式 &
+    现有 LoRA 快照，不是本文提示词动作策略的训练结果 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+当前七类工具任务为
+\[
+  \begin{aligned}
+  C=\{&
+  \texttt{single\_tool},\texttt{two\_step\_chain},
+  \texttt{chain3},\texttt{cross\_rate},\\
+  &\texttt{cross\_rate3},\texttt{sum\_two},
+  \texttt{error\_correction}\}.
+  \end{aligned}
+\]
+
+这里有一个重要缺口：当前目录没有可直接作为正式
+\(\Dtrain,\Dholdout,\Xholdout\) 的完整真实用户历史。现有 JSON 只能验证代码路径。
+正式实验前，必须保存完整会话，先按时间切分，再从训练侧提取动作。不能把 30 个合成
+\path{tasks_eval.jsonl} 任务写成``真实用户 holdout''。
+
+\section{当前代码与本文算法的关系}
+
+现有 \path{oocso/pref/run_pref.py} 让 Qwen3-4B 直接生成回答，再用 GRPO/OPD 更新回答
+token。本文不是那条代码路径。本文的 \(\policy\) 只给候选执行指令打分，最终回答由 FA
+生成。
+
+若开始实现，应放在新的 \path{pref_prompt_action_grpo/} 目录，复用以下通用部分：
+\begin{itemize}
+  \item \path{config.py} 的模型名和 LoRA 参数；
+  \item \path{env/} 的工具执行与成功检查；
+  \item \path{pref/pref_prm.py} 的冻结 Judge 接口；
+  \item \path{models.py} 的 teacher-forcing log-prob 计算。
+\end{itemize}
+不要修改现有直接回答实验，避免两种架构混在一起。
 
 \section{评测}
 
-\subsection{最少需要的对照}
+\subsection{对照}
 
-\begin{table}[H]
+\begin{table}[ht]
   \centering
-  \caption{建议的对照系统。}
-  \begin{tabularx}{\textwidth}{@{}L{0.31\textwidth}Y@{}}
+  \caption{最少需要的对照。}
+  \begin{tabularx}{\textwidth}{@{}L{0.30\textwidth}Y@{}}
     \toprule
     系统 & 回答的问题 \\
     \midrule
-    无个性化提示词 &
-    宿主自身能做到什么？ \\
-    直接提取的用户画像提示词 &
-    只整理历史是否已经足够？ \\
-    本文的优化提示词 &
-    离线改写是否超过直接提取？ \\
-    通用 GEPA 优化 &
-    改进是否来自已有提示词优化器？ \\
-    DSO 提示词策略（有日志概率时） &
-    动态选择提示词是否优于一份固定提示词？ \\
-    原离线策略版 &
-    文本提示词与参数化动作策略哪一个更有效？ \\
+    空动作 + FA &
+    不做个性化时，FA 本身表现如何？ \\
+    \(\basepolicy+\mathcal A\) + FA &
+    未训练的基础模型能否靠语言先验选对指令？ \\
+    \(\policy+\mathcal A\) + FA &
+    用户 LoRA 是否学会按任务选择指令？ \\
+    \(P_u\) 直接提示 + FA &
+    每次携带完整用户摘要是否已经足够？ \\
+    原 18 动作策略 + Compiler + FA &
+    数据派生指令是否优于固定手写动作？ \\
+    自由生成提示词 + FA &
+    指令库的可审计约束是否值得其表达能力损失？ \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\subsection{分开报告的指标}
+\subsection{报告}
 
-\begin{itemize}
-  \item 后续真实任务中的个性化符合度；
-  \item 环境可验证的任务成功率；
-  \item 各任务类别的结果和宏平均；
-  \item 提示词长度、离线调用次数、推理 token 和延迟；
-  \item 不同时间段上的偏好稳定性。
-\end{itemize}
-
-不要把这些指标压成一个总分。置信区间用于报告结果，不直接决定每次提示词改写。
+对真实 \(\Xholdout\)，比较训练策略与基础策略在同一 FA 下的回答。按类别报告：
+\begin{align}
+  \operatorname{Acc}_c
+  &=
+  \frac{1}{N_c}
+  \sum_{x\in\Xholdout^{(c)}}
+  \mathbf 1[y_{\theta}\succ y_{\mathrm{base}}],\\
+  \operatorname{Acc}_{\mathrm{macro}}
+  &=
+  \frac{1}{|C|}
+  \sum_c\operatorname{Acc}_c,\\
+  \operatorname{Acc}_{\mathrm{micro}}
+  &=
+  \frac{1}{N}
+  \sum_c N_c\operatorname{Acc}_c.
+\end{align}
+另外单独报告任务成功率、第一次回答符合偏好的比例、动作库大小、动作长度、FA 调用次数和
+在线新增动作数。不要把个性化和任务成功压成一个分数。
 
 \section{已有工作与创新边界}
 
-\begin{table}[H]
-  \centering
-  \caption{最接近的工作已经覆盖了哪些部分。}
-  \begin{tabularx}{\textwidth}{@{}L{0.20\textwidth}L{0.32\textwidth}Y@{}}
-    \toprule
-    工作 & 已经做到 & 与本方案的差别 \\
-    \midrule
-    OPPU \cite{tan2024oppu} &
-    从每位用户的历史构造画像提示词，并与检索和参数训练比较 &
-    不迭代搜索一份执行提示词 \\
-    DSO \cite{kiyohara2025prompt} &
-    从日志反馈学习按用户和问题选择候选提示词的策略 &
-    优化的是提示词选择策略；主要实验是个性化电影描述，不是多步智能体任务 \\
-    AGP \cite{wang2025agp} &
-    自动优化用于推荐重排的用户画像生成提示词 &
-    优化对象是推荐场景中的画像生成，不是通用智能体执行规则 \\
-    GEPA \cite{agrawal2025gepa} &
-    用执行轨迹和文字反馈进化提示词 &
-    默认优化任务程序，不专门建模单个用户的长期偏好 \\
-    本方案 &
-    从一位用户的多会话历史优化一份可读执行提示词 &
-    同时检查个性化和真实任务成功率 \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
-
-因此，下面这些说法不成立：
+以下方向已有直接工作：
 \begin{itemize}
-  \item “首次用提示词做个性化”；
-  \item “首次从离线反馈优化提示词”；
-  \item “首次在冻结模型上学习提示词”。
+  \item DSO 从日志反馈学习按上下文选择提示词；
+  \item AGP 自动改写个性化推荐中的画像提示词；
+  \item GEPA 根据执行轨迹和文字反馈迭代提示词；
+  \item OPPU 为每位用户训练独立的参数高效适配器。
 \end{itemize}
-
-可能尚未被直接覆盖的是更窄的组合：\textbf{单个用户、多会话智能体历史、一份可读执行提示词、任务成功约束、未来真实任务评测}。目前只能把它称为待验证的研究差异。正式投稿前仍需做更完整的文献检索。
-
-\section{建议先做的实验}
-
-\begin{enumerate}
-  \item 先使用现有用户历史，按会话和时间建立三段数据。
-  \item 固定宿主模型、工具、温度和最大输出长度。
-  \item 先跑“无提示词”和“直接提取提示词”。
-  \item 再实现上述单段改写和选择循环。
-  \item 用相同预算运行 GEPA，避免把已有优化器的能力算成新方法。
-  \item 与原来的 18 动作策略版做同题比较。
-  \item 只有在真实测试任务上同时改善个性化和任务成功，才继续做部署后的在线更新。
-\end{enumerate}
+因此，``提示词个性化''、``冻结模型后优化提示词''和``根据反馈改写提示词''都不是新的。
+本文可能不同的是完整组合，而不是任何一个单独部件。正式写成论文贡献前，还需要更完整的
+文献检索和直接对照实验。
 
 {\footnotesize\raggedright
 \begin{thebibliography}{9}
-\setlength{\itemsep}{0pt}
+\setlength{\itemsep}{1pt}
 
 \bibitem{kiyohara2025prompt}
 Haruka Kiyohara et al.
@@ -442,5 +555,19 @@ Parameter-Efficient Fine-Tuning.
 
 \end{thebibliography}
 }
+
+\section{最小可行实验}
+
+当前数据只够做流程验证：
+\begin{enumerate}
+  \item 从现有三条有效纠正中提取候选动作，并确认损坏 hint 被拒绝。
+  \item 在 80 个离线工具任务上比较空动作和已验证动作。
+  \item 训练一个新的提示词动作 LoRA，不复用当前直接回答检查点作为结果。
+  \item 用 30 个 dev 任务检查任务成功是否下降。
+  \item 暂不对 30 个 eval 任务报告正式个性化结论。
+\end{enumerate}
+
+正式实验还需要一位真实用户的完整历史，以及按时间保留的未来问题。没有这两项时，可以证明
+代码能运行，但不能证明离线个性化或在线适应有效。
 
 \end{document}
