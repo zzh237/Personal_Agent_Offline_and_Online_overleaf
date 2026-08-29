@@ -102,7 +102,7 @@
 
 \begin{table}[ht]
   \centering
-  \caption{沿用原 PDF 的符号。}
+  \caption{原 PDF 的核心符号，以及历史选择动作的内部符号。}
   \begin{tabularx}{\textwidth}{@{}L{0.23\textwidth}Y@{}}
     \toprule
     符号 & 含义 \\
@@ -112,6 +112,8 @@
     \(\Xholdout\) & holdout 真实用户问题 \\
     \(\Xsim\) & 训练问题 \\
     \(C,c\) & 任务类别集合与单个类别 \\
+    \(x\) & 策略选择动作时已经可见的当前任务状态；不含本轮尚未发生的反馈 \\
+    \(i,\Dtrain[i]\) & 一条历史执行记录的稳定编号，以及该编号指向的记录内容 \\
     \(P_u\) & 可选的结构化偏好摘要，只辅助 Judge \\
     \(a\) & 执行动作；本文只替换它的内部表示 \\
     \(\mathcal A\) & 动作集合 \\
@@ -321,20 +323,23 @@ student、TA 和 teacher 不共享 LoRA。
 
 模型不接收 \(P_u\)，也不接收用户 ID。加载哪个 LoRA 已经确定当前用户。
 
-对当前任务 \(x\)，query 输入只含：
+这里，\(x\) 是策略作出选择时已经可见的完整任务状态，包括当前用户请求、此前对话与工具
+结果、当前可用工具和类别 \(c\)。它不是某个 token，也不包含当前回答之后才会出现的用户
+反馈。策略把 \(x\) 序列化为：
 \begin{quote}
 \texttt{[CURRENT]} 当前状态、任务文本、允许工具和类别 \(c\)
 \texttt{[/CURRENT]}
 \end{quote}
 
-对每个候选索引 \(i\)，candidate 输入只含：
+每个 \(i\) 是 \(\Dtrain\) 中一条历史执行记录的稳定编号，\(\Dtrain[i]\) 才是该编号
+指向的记录内容。策略把 \(\Dtrain[i]\) 序列化为：
 \begin{quote}
 \texttt{[HISTORY]} 源路径、用户角色、历史任务、失败回答与纠正（若有）、
 被接受回答、已有结果
 \texttt{[/HISTORY]}
 \end{quote}
 
-评测首次回答时，query 中不能出现当前任务尚未发生的用户纠正。candidate 只能来自
+评测首次回答时，当前任务输入不能出现尚未发生的用户纠正。历史候选只能来自
 \(\Dtrain\) 或已经完成的更早在线交互。
 
 \subsection{输出}
@@ -342,24 +347,47 @@ student、TA 和 teacher 不共享 LoRA。
 策略输出的是式~\eqref{eq:action} 的源索引列表，不输出自然语言，不输出工具调用，也不输出
 最终回答。
 
-使用 Qwen 最后一层、最后一个非 padding token 的隐藏向量：
+记 \(\operatorname{Serialize}_{\mathrm{task}}(x)\) 为上面的当前任务文本，
+\(\operatorname{Serialize}_{\mathrm{hist}}(\Dtrain[i])\) 为上面的历史记录文本。
+\(\operatorname{LastHidden}\) 取 Qwen 最后一层中最后一个非 padding token 的
+1024 维隐藏向量。两个输入分别编码为
 \begin{align}
-  q_{\theta}(x)
+  \mathbf e_{\theta}^{\mathrm{task}}(x)
   &=
   \operatorname{normalize}
-  \left(\operatorname{Qwen}_{\theta}(x)_{\mathrm{last}}\right),\\
-  k_{\theta}(i)
+  \left(
+    \operatorname{LastHidden}
+    \left[
+      \operatorname{Qwen}_{\theta}
+      \left(\operatorname{Serialize}_{\mathrm{task}}(x)\right)
+    \right]
+  \right),\\
+  \mathbf e_{\theta}^{\mathrm{hist}}(i)
   &=
   \operatorname{normalize}
-  \left(\operatorname{Qwen}_{\theta}(i)_{\mathrm{last}}\right).
+  \left(
+    \operatorname{LastHidden}
+    \left[
+      \operatorname{Qwen}_{\theta}
+      \left(\operatorname{Serialize}_{\mathrm{hist}}(\Dtrain[i])\right)
+    \right]
+  \right).
 \end{align}
-候选分数为
+其中 \(\operatorname{normalize}(\mathbf z)=\mathbf z/\|\mathbf z\|_2\)。
+历史记录 \(i\) 对当前任务 \(x\) 的分数是两者的余弦相似度：
 \begin{equation}
   s_{\theta}(x,i)
   =
-  q_{\theta}(x)^\top k_{\theta}(i).
+  \left(\mathbf e_{\theta}^{\mathrm{task}}(x)\right)^\top
+  \mathbf e_{\theta}^{\mathrm{hist}}(i).
   \label{eq:score}
 \end{equation}
+\(\mathbf e_{\theta}^{\mathrm{task}}\) 和
+\(\mathbf e_{\theta}^{\mathrm{hist}}\) 只是任务与历史记录的表示，\textbf{不是}
+Transformer attention 内部的 query、key 或 value。上文的
+\(\texttt{q\_proj},\texttt{k\_proj},\texttt{v\_proj}\) 仍按 Qwen 的正常前向过程
+产生隐藏状态；式~\eqref{eq:score} 不直接读取它们。
+
 \(\mathtt{STOP}\) 也用固定文本编码成一个候选。没有新分类头。式~\eqref{eq:pointer}
 中的 \(T\) 控制 cosine score 的温度；首个实现使用 \(T=0.05\)。
 
