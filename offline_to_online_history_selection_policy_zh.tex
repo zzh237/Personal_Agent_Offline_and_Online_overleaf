@@ -1,0 +1,573 @@
+% !TeX program = xelatex
+\documentclass[11pt,UTF8,fontset=fandol]{ctexart}
+
+\usepackage[margin=0.82in]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs,tabularx,array}
+\usepackage{enumitem}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{xurl}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=MidnightBlue,
+  citecolor=ForestGreen,
+  urlcolor=BrickRed,
+  pdftitle={基于历史执行证据选择的离线到在线个性化策略学习}
+}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{5pt}
+\setlist[itemize]{leftmargin=1.35em,itemsep=2pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=1.55em,itemsep=3pt,topsep=3pt}
+
+\newcommand{\Dhist}{\mathcal D_{\mathrm{hist}}}
+\newcommand{\Dtrain}{\mathcal D_{\mathrm{train}}}
+\newcommand{\Dholdout}{\mathcal D_{\mathrm{holdout}}}
+\newcommand{\Xholdout}{\mathcal X_{\mathrm{holdout}}}
+\newcommand{\Xsim}{\widetilde{\mathcal X}}
+\newcommand{\policy}{\pi_{\theta}}
+\newcommand{\oldpolicy}{\pi_{\theta_{\mathrm{old}}}}
+\newcommand{\basepolicy}{\pi_{\mathrm{base}}}
+\newcommand{\FA}{\mathrm{FA}}
+\newcommand{\Judge}{\operatorname{Judge}}
+\newcommand{\clip}{\operatorname{clip}}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries 基于历史执行证据选择的离线到在线个性化策略学习\par}
+  \vspace{5pt}
+  {\large 完全保留原符号和冻结 FA 设定，只替换 18 动作与 Compiler\par}
+  \vspace{4pt}
+  {\small 中文算法设计笔记 \quad 2026 年 8 月 29 日}
+\end{center}
+
+\section{最终选择}
+
+本文以
+\path{/fsx/xzhichao/workspace/offline training/Offline_training_algorithm (2).pdf}
+为唯一符号来源。主链保持为
+\begin{equation}
+  x
+  \longrightarrow
+  a\sim\policy(\cdot\mid x)
+  \longrightarrow
+  \FA.\operatorname{Execute}(a,x)
+  \longrightarrow
+  y_a.
+  \label{eq:chain}
+\end{equation}
+策略不生成最终回答。冻结的 FA 读取当前任务 \(x\) 和动作 \(a\)，再生成 \(y_a\)。
+
+原方案真正有问题的是
+\[
+  a=(m,\tau,s),\qquad |\mathcal A|=18,
+\]
+以及把标签翻译成手写指令的 Compiler。OOCSO 数据并不包含这 18 个标签。它包含完整状态、
+失败回答、用户纠正、改后回答和用户是否接受。因此，本版本把 \(a\) 的\textbf{内部表示}
+替换为从 \(\Dtrain\) 选择出的历史记录索引。符号 \(a,\mathcal A\) 不改。
+
+\begin{quote}
+\textbf{新动作：} \(a\) 是一个有序的历史记录索引列表。每个索引都指向
+\(\Dtrain\) 中一段已被用户接受的真实执行记录。FA 直接读取这些原始消息，然后完成当前
+任务。没有标签到提示词的翻译，也没有模型生成的偏好规则。
+\end{quote}
+
+这比自由生成提示词更适合当前数据：每个动作都能追溯到文件和 JSON 路径，在线收到新纠正后
+也可以直接加入新记录。
+
+\section{不可改变的合同}
+
+\subsection{符号}
+
+\begin{table}[ht]
+  \centering
+  \caption{沿用原 PDF 的符号。}
+  \begin{tabularx}{\textwidth}{@{}L{0.23\textwidth}Y@{}}
+    \toprule
+    符号 & 含义 \\
+    \midrule
+    \(\Dhist\) & 完整历史 \\
+    \(\Dtrain,\Dholdout\) & 分层后的训练历史与评测历史 \\
+    \(\Xholdout\) & holdout 真实用户问题 \\
+    \(\Xsim\) & 训练问题 \\
+    \(C,c\) & 任务类别集合与单个类别 \\
+    \(P_u\) & 可选的结构化偏好摘要，只辅助 Judge \\
+    \(a\) & 执行动作；本文只替换它的内部表示 \\
+    \(\mathcal A\) & 动作集合 \\
+    \(y_a\) & FA 在动作 \(a\) 下的回答 \\
+    \(r_a\) & Judge 对 \(y_a\) 的标量分 \\
+    \(A_a=r_a-\bar r\) & 组内优势 \\
+    \(\policy(a\mid x)\) & 可训练策略 \\
+    \(\basepolicy\) & 初始化 \(\policy\) 的冻结基础策略 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+本文不引入 \(D_{\mathrm{opt}}\)、\(D_{\mathrm{select}}\)、提示词集合
+\(\mathcal P\) 或另一套奖励符号。所有后续公式继续使用上表。
+
+\subsection{角色}
+
+\begin{table}[ht]
+  \centering
+  \caption{角色边界与原 PDF 相同。}
+  \begin{tabularx}{\textwidth}{@{}L{0.23\textwidth}L{0.15\textwidth}Y@{}}
+    \toprule
+    角色 & 是否更新 & 职责 \\
+    \midrule
+    Frozen Agent（FA） &
+    否 &
+    可选地提取 \(P_u\)，执行 \(a\)，完成任务并生成 \(y_a\) \\
+    Policy \(\policy\) &
+    是 &
+    输入 \(x\)，输出 \(a\in\mathcal A\) \\
+    Base \(\basepolicy\) &
+    否 &
+    与 \(\policy\) 使用同一主干，关闭用户 LoRA \\
+    Judge &
+    否 &
+    读取训练侧真实历史、\(x\)、\(y_a\) 和可选的 \(P_u\)，输出 \(r_a\) \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+模型参数中只有 \(\theta\) 更新。FA、Judge、\(P_u\) 和 \(\basepolicy\) 全程冻结。
+训练奖励必须来自 \(y_a\) 的执行结果，不能直接给索引动作打规则分。
+
+\section{OOCSO 数据合同}
+
+\subsection{实际文件}
+
+\begin{table}[ht]
+  \centering
+  \caption{本算法实际读取的 OOCSO 文件。}
+  \begin{tabularx}{\textwidth}{@{}L{0.30\textwidth}L{0.22\textwidth}Y@{}}
+    \toprule
+    文件 & 用途 & 已核对规模 \\
+    \midrule
+    \path{preview_pipeline.json} &
+    student 的离线历史与在线流 &
+    离线 8 条已接受记录，其中 2 条先被纠正；在线 3 条，三条都先被纠正 \\
+    \path{preview_pipeline_ta.json} &
+    TA 的离线历史与在线流 &
+    离线 2 条、在线 2 条，全部首次即被接受 \\
+    \path{tasks_train.jsonl} &
+    \(\Xsim\) 与在线任务流 &
+    120 个工具任务；当前代码约定 0--79 离线、80--119 在线 \\
+    \path{tasks_dev.jsonl} &
+    开发检查 &
+    30 个任务 \\
+    \path{tasks_eval.jsonl} &
+    任务成功 holdout &
+    30 个任务；不能冒充真实个性化 \(\Xholdout\) \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\path{dump_samples.json}、\path{preview_offline.json} 和
+\path{preview_online_partial.json} 与上述流程有重复，只用于诊断，不能重复计数。
+\path{preview_pi0_student.pt} 与 \path{preview_pi0_ta.pt} 是旧的 4B
+直接回答 LoRA，不是本文选择策略的检查点，不能继续训练后当作本文结果。
+
+\subsection{类别}
+
+现有工具任务给出七个固定类别：
+\[
+  \begin{aligned}
+  C=\{&
+  \texttt{single\_tool},\texttt{two\_step\_chain},
+  \texttt{chain3},\texttt{cross\_rate},\\
+  &\texttt{cross\_rate3},\texttt{sum\_two},
+  \texttt{error\_correction}\}.
+  \end{aligned}
+\]
+每个 JSONL 任务已经含 \(c\)、允许工具、正确答案、容差和最大步数。不重新让模型猜类别。
+
+\subsection{一条可选历史记录}
+
+从 \(\Dtrain\) 中只保留最终被用户接受的记录。每条记录按固定规则保存：
+\begin{itemize}
+  \item 源文件与 JSON Pointer；
+  \item 用户角色与历史任务文本；
+  \item 源记录已有的任务类别 \(c\)（若存在；preview 数学记录没有该字段）；
+  \item 纠正前状态；
+  \item 失败回答与用户纠正（若存在）；
+  \item 最终被接受的回答；
+  \item 用户接受信号，以及源记录已有的任务成功结果（若存在）。
+\end{itemize}
+
+Qwen Thinking 输出只保留最后一个 \texttt{</think>} 后的用户可见部分。没有闭合
+\texttt{</think>} 的输出视为空回答，不进入动作。历史文本不做总结，不由 LLM 改写。
+
+\subsection{当前数据边界}
+
+\begin{table}[ht]
+  \centering
+  \caption{当前可运行范围。}
+  \begin{tabularx}{0.94\textwidth}{@{}L{0.18\textwidth}L{0.24\textwidth}L{0.24\textwidth}Y@{}}
+    \toprule
+    用户 & 离线 & 在线 & 结论 \\
+    \midrule
+    student & 8 条，2 条含纠正 & 3 条，3 条含纠正 & 可做小规模流程验证 \\
+    TA & 2 条，均为正例 & 2 条，均为正例 & 可验证读取，不能稳定比较学习 \\
+    teacher & 无训练轨迹 & 无训练轨迹 & 目前不能训练 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\path{pref_config_snapshot.json} 与当前 \path{pref/detectors.py} 对 TA 和
+teacher 的偏好方向不一致，因此不能作为标签来源。本算法以实际轨迹、当前 detector 和任务检查器
+为准。
+
+当前目录也没有正式的真实用户 \(\Dholdout,\Xholdout\)。因此现有数据可以证明流程是否
+运行，但不能支持最终个性化结论。
+
+\section[新的动作 a]{新的动作 \(a\)}
+
+\subsection{定义}
+
+设 \(\Dtrain\) 中可用记录有稳定索引。动作写成
+\begin{equation}
+  a=(i_1,i_2,\ldots,i_k,\mathtt{STOP}),
+  \label{eq:action}
+\end{equation}
+其中每个 \(i_j\) 都是一个源记录索引。顺序表示 FA 看到这些历史的顺序。若第一项就是
+\(\mathtt{STOP}\)，FA 不读取任何个性化历史。
+
+\(\mathcal A\) 是在证据 token 预算内的所有合法有序索引列表。首个实现固定
+\[
+  B_{\mathrm{ctx}}=4096
+\]
+作为历史证据预算；当前任务 \(x\)、工具描述和 FA 输出预算另计。某条记录加入后超过
+\(B_{\mathrm{ctx}}\)，该记录在当前选择步不可用。
+
+\subsection{FA 如何执行}
+
+索引只做原样查表：
+\begin{enumerate}
+  \item 根据 \(i_1,\ldots,i_k\) 读取源 JSON 中的消息；
+  \item 按源顺序放入 FA 的历史消息区；
+  \item 在末尾放入当前任务 \(x\)；
+  \item 由同一个冻结 FA 完成任务，得到 \(y_a\)。
+\end{enumerate}
+
+这里没有 Compiler。系统不会把索引翻译成“简短回答”“多问一句”之类的新文本。动作指向的
+就是原始历史消息。
+
+\subsection{为什么不是其他方案}
+
+\begin{itemize}
+  \item \textbf{固定 18 动作：}数据没有这些标签，表达能力也被手写轴限制。
+  \item \textbf{自由生成提示词：}会加入用户从未表达的偏好，且难以追溯。
+  \item \textbf{直接训练回答模型：}改变了式~\eqref{eq:chain}，最终回答不再来自冻结 FA。
+  \item \textbf{给 FA 加 adapter：}远程黑盒 FA 无法加载本地 adapter，也会改变“FA 冻结”的边界。
+\end{itemize}
+
+历史选择动作只决定 FA 在执行前看到哪些真实证据，最符合现有数据和冻结宿主条件。
+
+\section{小策略模型}
+
+\subsection{模型和参数}
+
+\(\policy\) 使用本机已有的 \texttt{Qwen/Qwen3-0.6B}，不是当前 4B 直接回答模型。
+已核对的主干配置为：
+\[
+  28\ \text{层},\quad
+  d=1024,\quad
+  16\ \text{个 query heads},\quad
+  8\ \text{个 KV heads},\quad
+  40960\ \text{token 上限}.
+\]
+
+主干冻结。每位用户单独加载一个 LoRA：
+\[
+  r=16,\qquad
+  \alpha=32,\qquad
+  \text{dropout}=0,
+\]
+目标层为每层的
+\(\texttt{q\_proj},\texttt{k\_proj},\texttt{v\_proj},\texttt{o\_proj}\)。
+根据实际权重形状，LoRA 可训练参数数目为
+\[
+  28\times16
+  \big[(1024+2048)+(1024+1024)
+       +(1024+1024)+(2048+1024)\big]
+  =4{,}587{,}520.
+\]
+student、TA 和 teacher 不共享 LoRA。
+
+\subsection{输入}
+
+模型不接收 \(P_u\)，也不接收用户 ID。加载哪个 LoRA 已经确定当前用户。
+
+对当前任务 \(x\)，query 输入只含：
+\begin{quote}
+\texttt{[CURRENT]} 当前状态、任务文本、允许工具和类别 \(c\)
+\texttt{[/CURRENT]}
+\end{quote}
+
+对每个候选索引 \(i\)，candidate 输入只含：
+\begin{quote}
+\texttt{[HISTORY]} 源路径、用户角色、历史任务、失败回答与纠正（若有）、
+被接受回答、已有结果
+\texttt{[/HISTORY]}
+\end{quote}
+
+评测首次回答时，query 中不能出现当前任务尚未发生的用户纠正。candidate 只能来自
+\(\Dtrain\) 或已经完成的更早在线交互。
+
+\subsection{输出}
+
+策略输出的是式~\eqref{eq:action} 的源索引列表，不输出自然语言，不输出工具调用，也不输出
+最终回答。
+
+使用 Qwen 最后一层、最后一个非 padding token 的隐藏向量：
+\begin{align}
+  q_{\theta}(x)
+  &=
+  \operatorname{normalize}
+  \left(\operatorname{Qwen}_{\theta}(x)_{\mathrm{last}}\right),\\
+  k_{\theta}(i)
+  &=
+  \operatorname{normalize}
+  \left(\operatorname{Qwen}_{\theta}(i)_{\mathrm{last}}\right).
+\end{align}
+候选分数为
+\begin{equation}
+  s_{\theta}(x,i)
+  =
+  q_{\theta}(x)^\top k_{\theta}(i).
+  \label{eq:score}
+\end{equation}
+\(\mathtt{STOP}\) 也用固定文本编码成一个候选。没有新分类头。式~\eqref{eq:pointer}
+中的 \(T\) 控制 cosine score 的温度；首个实现使用 \(T=0.05\)。
+
+\subsection{动作概率}
+
+令 \(V_j(x)\) 表示第 \(j\) 步尚未选择、且仍能放进
+\(B_{\mathrm{ctx}}\) 的索引集合。第 \(j\) 步，
+\begin{equation}
+  p_{\theta}(i_j\mid x,i_{<j})
+  =
+  \frac{\exp(s_{\theta}(x,i_j)/T)}
+  {\exp(s_{\theta}(x,\mathtt{STOP})/T)
+   +\sum_{\ell\in V_j(x)}
+    \exp(s_{\theta}(x,\ell)/T)}.
+  \label{eq:pointer}
+\end{equation}
+选中 \(\mathtt{STOP}\) 后结束。完整动作概率仍使用原符号：
+\begin{equation}
+  \policy(a\mid x)
+  =
+  \left[
+    \prod_{j=1}^{k}
+    p_{\theta}(i_j\mid x,i_{<j})
+  \right]
+  p_{\theta}(\mathtt{STOP}\mid x,i_{\le k}).
+  \label{eq:policy}
+\end{equation}
+
+\(\basepolicy\) 是同一个 Qwen3-0.6B，关闭 LoRA，并使用相同候选记录、温度和 token
+预算。这样 base 与训练策略只差 \(\theta\)。
+
+\section{离线阶段}
+
+\subsection{数据准备}
+
+\begin{enumerate}
+  \item 先按完整 session 和时间切分 \(\Dhist\) 为
+    \(\Dtrain,\Dholdout\)；切分后不得移动记录。
+  \item 只从 \(\Dtrain\) 建立可选历史记录。
+  \item 可选地由 FA 从 \(\Dtrain\) 提取一次 \(P_u\)，随后冻结；\(P_u\) 只给 Judge。
+  \item 当前 OOCSO 首次实现直接把
+    \path{tasks_train.jsonl} 的 0--79 号任务作为 \(\Xsim\)，不再让 FA 另造题。
+  \item \(\Dholdout,\Xholdout\) 不参与候选建立、Judge 造分、选参或训练。
+\end{enumerate}
+
+\subsection{执行与打分}
+
+对每个 \(x\in\Xsim\)，从 \(\oldpolicy\) 采样 \(K=8\) 个不同动作。每个动作都交给同一个
+冻结 FA：
+\begin{equation}
+  y_a=\FA.\operatorname{Execute}(a,x).
+  \label{eq:execute}
+\end{equation}
+
+Judge 输入保持原 PDF 的定义：
+\begin{equation}
+  r_a
+  =
+  \Judge(\mathcal H_{\mathrm{train}},x,y_a;P_u^{\mathrm{opt}}),
+  \label{eq:reward}
+\end{equation}
+其中 \(\mathcal H_{\mathrm{train}}\) 只来自 \(\Dtrain\)。对工具任务，Judge 同时读取
+\path{tasks_train.jsonl} 中的正确答案、容差和任务检查结果。任务失败不能靠写作风格获得高分。
+同一个 \(x\) 下所有 \(y_a\) 使用相同 Judge 提示和温度。
+
+\subsection{组内优势}
+
+完全沿用原式：
+\begin{equation}
+  \bar r
+  =
+  \frac{1}{K}\sum_a r_a,
+  \qquad
+  A_a=r_a-\bar r.
+  \label{eq:advantage}
+\end{equation}
+若八个动作得分相同，该组不产生策略梯度。
+
+\subsection{GRPO}
+
+收集动作时保存 \(\oldpolicy(a\mid x)\)。更新时
+\begin{equation}
+  \rho_a(\theta)
+  =
+  \frac{\policy(a\mid x)}
+       {\oldpolicy(a\mid x)}.
+\end{equation}
+使用 clipped GRPO：
+\begin{equation}
+  \mathcal L_{\mathrm{GRPO}}(\theta)
+  =
+  -\mathbb E_{x\sim\Xsim}
+  \left[
+  \frac{1}{K}
+  \sum_a
+  \min\left(
+    \rho_a A_a,\,
+    \clip(\rho_a,1-\epsilon,1+\epsilon)A_a
+  \right)
+  \right].
+  \label{eq:grpo}
+\end{equation}
+只更新 4,587,520 个 LoRA 参数。FA 和 Judge 的 token 概率不进入损失。离线结束得到
+\(\pi_0\)。
+
+\section{在线阶段}
+
+在线阶段从同一 \(\pi_0\)、同一动作格式和同一 Judge 开始。当前 OOCSO 首次运行使用
+\path{tasks_train.jsonl} 的 80--119 号任务，保持它们不进入离线阶段。
+
+每个在线任务按以下顺序处理：
+\begin{enumerate}
+  \item 任务开始时冻结候选快照。快照只含更早的交互，不含当前任务的任何消息；
+  \item 从 \(\oldpolicy\) 采样 \(K=8\) 个动作，并由 FA 执行。部署规则选出的一个
+    \(y_a\) 交给用户，其余回答只用于组内训练；
+  \item 读取真实任务结果和用户反应。若用户纠正，允许 FA 重做，直到得到被接受的回答或
+    会话失败；
+  \item Judge 使用该结果和用户反应给第二步已经生成的回答打分，再按
+    式~\eqref{eq:advantage} 和式~\eqref{eq:grpo} 更新同一个 LoRA；
+  \item 会话结束后，才把当前记录追加到训练侧历史。新记录只能从下一个任务开始成为候选。
+\end{enumerate}
+
+在线新增的是带来源的历史记录，不是模型写出的 hint。这样直接保留用户原话。
+当前 OOCSO 中损坏的 hint（例如单字``和''）也不会进入训练。
+
+\(\Dholdout\) 和 \(\Xholdout\) 在线期间仍不可见。
+
+\section{推理}
+
+部署时：
+\begin{enumerate}
+  \item 对 \(\Dtrain\) 中候选记录计算式~\eqref{eq:score}；
+  \item 按式~\eqref{eq:pointer} 选择索引，直到 \(\mathtt{STOP}\)；
+  \item 由式~\eqref{eq:policy} 得到 \(\policy(a\mid x)\)；
+  \item 运行 \(y_a=\FA.\operatorname{Execute}(a,x)\)；
+  \item 返回 \(y_a\)。
+\end{enumerate}
+
+FA 不读取完整 \(P_u\)，除非该版本被单独作为基线。策略输出中没有自然语言控制指令。
+
+\section{评测}
+
+\subsection{必须比较的系统}
+
+\begin{table}[ht]
+  \centering
+  \caption{最小对照。}
+  \begin{tabularx}{\textwidth}{@{}L{0.31\textwidth}Y@{}}
+    \toprule
+    系统 & 回答的问题 \\
+    \midrule
+    空动作 + FA &
+    不给历史时，冻结 FA 表现如何？ \\
+    BM25/语义检索 + FA &
+    普通相似度检索是否已经足够？ \\
+    \(\basepolicy+\FA\) &
+    未训练的 0.6B 选择器表现如何？ \\
+    \(\policy+\FA\) &
+    下游执行奖励是否学会了更好的历史选择？ \\
+    全量 \(\Dtrain+\FA\) &
+    选择是否优于把所有历史塞给 FA？ \\
+    原 18 动作 + Compiler + FA &
+    数据驱动动作是否优于手写标签？ \\
+    旧 4B 直接回答 LoRA &
+    保持冻结 FA 的代价和收益是什么？ \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{指标}
+
+对真实 \(\Xholdout\)，在同一个 FA 下比较 \(y_{\theta}\) 和
+\(y_{\mathrm{base}}\)：
+\begin{align}
+  \operatorname{Acc}_c
+  &=
+  \frac{1}{N_c}
+  \sum_{x\in\Xholdout^{(c)}}
+  \mathbf 1[y_{\theta}\succ y_{\mathrm{base}}],\\
+  \operatorname{Acc}_{\mathrm{macro}}
+  &=
+  \frac{1}{|C|}
+  \sum_c\operatorname{Acc}_c,\\
+  \operatorname{Acc}_{\mathrm{micro}}
+  &=
+  \frac{1}{N}
+  \sum_c N_c\operatorname{Acc}_c.
+\end{align}
+
+另外分别报告任务成功率、首次回答符合偏好的比例、所选历史条数、历史 token 数、FA 调用
+成本和在线新增记录数。个性化与任务成功不能合成一个总分。
+
+\section{现有数据能证明什么}
+
+当前数据足以完成 student 的端到端小规模验证：
+\begin{enumerate}
+  \item 从 student 离线部分建立 8 条候选历史；
+  \item 用 0--79 号工具任务训练选择器；
+  \item 从 \(\pi_0\) 开始处理 80--119 号在线任务；
+  \item 把三条已有在线纠正作为回放测试，检查新增记录路径；
+  \item 在 30 个 dev/eval 工具任务上检查任务成功。
+\end{enumerate}
+
+但它还不能证明正式个性化效果：
+\begin{itemize}
+  \item TA 训练历史只有两条，且没有负例；
+  \item teacher 没有训练轨迹；
+  \item 没有按时间冻结的真实用户 \(\Xholdout\)；
+  \item 当前 preview 来自模拟用户，不是真实部署日志。
+\end{itemize}
+
+因此，下一次运行可以报告 feasibility 和任务成功，不能把
+\path{tasks_eval.jsonl} 写成真实用户个性化 holdout。
+
+\section{创新边界}
+
+历史检索、个性化记忆和策略学习分别已有大量工作。本文不能声称首次检索用户历史。
+真正需要验证的差异是：
+\begin{quote}
+把``选哪段真实历史给冻结黑盒 Agent 看''定义为策略动作，用 Agent 实际执行后的 Judge
+分数训练选择器，并让同一动作空间从离线历史自然延伸到在线新增记录。
+\end{quote}
+
+这项设计的价值不是新名词，而是三个可检查性质：动作来自真实数据、每个动作可追溯、最终任务仍由
+冻结 FA 完成。只有直接实验超过普通检索和完整历史基线后，才能把它写成方法贡献。
+
+\end{document}
