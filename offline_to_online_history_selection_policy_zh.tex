@@ -104,6 +104,7 @@
     \(C,c\) & 任务类别集合与单个类别 \\
     \(x\) & 策略选择动作时已经可见的当前任务状态；不含本轮尚未发生的反馈 \\
     \(i,\Dtrain[i]\) & 一条历史执行记录的稳定编号，以及该编号指向的记录内容 \\
+    \(B_{\mathrm{ctx}}\) & 被选历史记录可占用的 token 上限；不是模型的完整上下文长度 \\
     \(P_u\) & 可选的结构化偏好摘要，只辅助 Judge \\
     \(a\) & 执行动作；本文只替换它的内部表示 \\
     \(\mathcal A\) & 动作集合 \\
@@ -245,11 +246,13 @@ teacher 的偏好方向不一致，因此不能作为标签来源。本算法以
 \(\mathtt{STOP}\)，FA 不读取任何个性化历史。
 
 \(\mathcal A\) 是在证据 token 预算内的所有合法有序索引列表。首个实现固定
-\[
-  B_{\mathrm{ctx}}=4096
-\]
-作为历史证据预算；当前任务 \(x\)、工具描述和 FA 输出预算另计。某条记录加入后超过
-\(B_{\mathrm{ctx}}\)，该记录在当前选择步不可用。
+\begin{equation}
+  B_{\mathrm{ctx}}=4096\ \text{tokens}.
+  \label{eq:context-budget}
+\end{equation}
+该预算只计算被选历史记录序列化后的 token。system prompt、当前任务 \(x\)、工具描述
+和 FA 输出预算另计。因此，\(B_{\mathrm{ctx}}\) 不是 Qwen 的 40960-token 完整上下文
+上限。
 
 \subsection{FA 如何执行}
 
@@ -378,8 +381,21 @@ Transformer attention 内部的 query、key 或 value。
 
 \subsection{动作概率}
 
-令 \(V_j(x)\) 表示第 \(j\) 步尚未选择、且仍能放进
-\(B_{\mathrm{ctx}}\) 的索引集合。第 \(j\) 步，
+令 \(\mathcal I(x)\) 为任务 \(x\) 开始时可用的历史记录索引集合，
+\(\operatorname{tok}(i)\) 为
+\(\operatorname{Serialize}_{\mathrm{hist}}(\Dtrain[i])\) 的 token 数。根据
+式~\eqref{eq:context-budget}，第 \(j\) 步的合法候选集合为
+\begin{equation}
+  V_j(x)
+  =
+  \left\{
+    i\in\mathcal I(x)\setminus\{i_1,\ldots,i_{j-1}\}:
+    \sum_{m<j}\operatorname{tok}(i_m)+\operatorname{tok}(i)
+    \le B_{\mathrm{ctx}}
+  \right\}.
+  \label{eq:valid-candidate-set}
+\end{equation}
+因此，\(V_j(x)\) 只保留尚未选择、且加入后仍不超过历史证据预算的索引。第 \(j\) 步，
 \begin{equation}
   p_{\theta}(i_j\mid x,i_{<j})
   =
