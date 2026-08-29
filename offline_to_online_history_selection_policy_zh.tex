@@ -1,6 +1,22 @@
 % !TeX program = xelatex
-\documentclass[11pt,UTF8,fontset=fandol]{ctexart}
+\documentclass[11pt,UTF8,fontset=none]{ctexart}
 
+\usepackage{fontspec}
+\setCJKmainfont[
+  Path=fonts/,
+  BoldFont=FandolSong-Bold.otf,
+  AutoFakeSlant=0.2
+]{FandolSong-Regular.otf}
+\setCJKsansfont[
+  Path=fonts/,
+  BoldFont=FandolSong-Bold.otf,
+  AutoFakeSlant=0.2
+]{FandolSong-Regular.otf}
+\setCJKmonofont[
+  Path=fonts/,
+  BoldFont=FandolSong-Bold.otf,
+  AutoFakeSlant=0.2
+]{FandolSong-Regular.otf}
 \usepackage[margin=0.82in]{geometry}
 \usepackage{amsmath,amssymb,mathtools}
 \usepackage{booktabs,tabularx,array}
