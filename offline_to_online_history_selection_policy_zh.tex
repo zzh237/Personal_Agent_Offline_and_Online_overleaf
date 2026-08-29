@@ -57,16 +57,11 @@
 \begin{center}
   {\LARGE\bfseries 基于历史执行证据选择的离线到在线个性化策略学习\par}
   \vspace{5pt}
-  {\large 完全保留原符号和冻结 FA 设定，只替换 18 动作与 Compiler\par}
-  \vspace{4pt}
   {\small 中文算法设计笔记 \quad 2026 年 8 月 29 日}
 \end{center}
 
 \section{最终选择}
-
-本文以
-\path{/fsx/xzhichao/workspace/offline training/Offline_training_algorithm (2).pdf}
-为唯一符号来源。主链保持为
+主链保持为
 \begin{equation}
   x
   \longrightarrow
@@ -78,12 +73,7 @@
   \label{eq:chain}
 \end{equation}
 策略不生成最终回答。冻结的 FA 读取当前任务 \(x\) 和动作 \(a\)，再生成 \(y_a\)。
-
-原方案真正有问题的是
-\[
-  a=(m,\tau,s),\qquad |\mathcal A|=18,
-\]
-以及把标签翻译成手写指令的 Compiler。OOCSO 数据并不包含这 18 个标签。它包含完整状态、
+ 数据并不包含这 18 个标签。它包含完整状态、
 失败回答、用户纠正、改后回答和用户是否接受。因此，本版本把 \(a\) 的\textbf{内部表示}
 替换为从 \(\Dtrain\) 选择出的历史记录索引。符号 \(a,\mathcal A\) 不改。
 
@@ -155,9 +145,9 @@
 模型参数中只有 \(\theta\) 更新。FA、Judge、\(P_u\) 和 \(\basepolicy\) 全程冻结。
 训练奖励必须来自 \(y_a\) 的执行结果，不能直接给索引动作打规则分。
 
-\section{OOCSO 数据合同}
+\section{数据}
 
-\subsection{实际文件}
+
 
 \begin{table}[ht]
   \centering
@@ -185,10 +175,7 @@
   \end{tabularx}
 \end{table}
 
-\path{dump_samples.json}、\path{preview_offline.json} 和
-\path{preview_online_partial.json} 与上述流程有重复，只用于诊断，不能重复计数。
-\path{preview_pi0_student.pt} 与 \path{preview_pi0_ta.pt} 是旧的 4B
-直接回答 LoRA，不是本文选择策略的检查点，不能继续训练后当作本文结果。
+
 
 \subsection{类别}
 
@@ -467,7 +454,7 @@ Judge 输入保持原 PDF 的定义：
 
 \section{在线阶段}
 
-在线阶段从同一 \(\pi_0\)、同一动作格式和同一 Judge 开始。当前 OOCSO 首次运行使用
+在线阶段从同一 \(\pi_0\)、同一动作格式和同一 Judge 开始。当前首次运行使用
 \path{tasks_train.jsonl} 的 80--119 号任务，保持它们不进入离线阶段。
 
 每个在线任务按以下顺序处理：
