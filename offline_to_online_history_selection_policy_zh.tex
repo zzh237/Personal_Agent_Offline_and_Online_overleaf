@@ -104,6 +104,7 @@
     \(C,c\) & 任务类别集合与单个类别 \\
     \(x\) & 策略选择动作时已经可见的当前任务状态；不含本轮尚未发生的反馈 \\
     \(i,\Dtrain[i]\) & 一条历史执行记录的稳定编号，以及该编号指向的记录内容 \\
+    \(i_{<j}=(i_1,\ldots,i_{j-1})\) & 第 \(j\) 步之前已经选中的有序历史记录 \\
     \(B_{\mathrm{ctx}}\) & 被选历史记录可占用的 token 上限；不是模型的完整上下文长度 \\
     \(P_u\) & 可选的结构化偏好摘要，只辅助 Judge \\
     \(a\) & 执行动作；本文只替换它的内部表示 \\
@@ -244,6 +245,8 @@ teacher 的偏好方向不一致，因此不能作为标签来源。本算法以
 \end{equation}
 其中每个 \(i_j\) 都是一个源记录索引。顺序表示 FA 看到这些历史的顺序。若第一项就是
 \(\mathtt{STOP}\)，FA 不读取任何个性化历史。
+每一步只新增一个索引，但一次完整决策可以选择零条、一条或多条记录。记录数 \(k\) 由
+\(\mathtt{STOP}\) 和历史证据预算共同决定。
 
 \(\mathcal A\) 是在证据 token 预算内的所有合法有序索引列表。首个实现固定
 \begin{equation}
@@ -339,17 +342,33 @@ student、TA 和 teacher 不共享 LoRA。
 
 记 \(\operatorname{Serialize}_{\mathrm{task}}(x)\) 为上面的当前任务文本，
 \(\operatorname{Serialize}_{\mathrm{hist}}(\Dtrain[i])\) 为上面的历史记录文本。
+第 \(j\) 步的选择状态按已选顺序连接当前任务与历史前缀：
+\begin{equation}
+  \begin{aligned}
+  \operatorname{Serialize}_{\mathrm{state}}(x,i_{<j})
+  &=
+  \operatorname{Serialize}_{\mathrm{task}}(x)
+  \mathbin{\Vert}
+  \big\Vert_{m=1}^{j-1}
+  \operatorname{Serialize}_{\mathrm{hist}}(\Dtrain[i_m])\\
+  &\quad\mathbin{\Vert}\ \texttt{[NEXT\_HISTORY]} ,
+  \end{aligned}
+  \label{eq:selection-state}
+\end{equation}
+其中 \(\Vert\) 表示用明确的字段边界连接文本，末尾标记让最后一个隐藏向量表示“下一条选
+什么”。\(j=1\) 时前缀为空，选择状态只含当前任务和末尾标记。
+
 \(\operatorname{LastHidden}\) 取 Qwen 最后一层中最后一个非 padding token 的
-1024 维隐藏向量。两个输入分别编码为
+1024 维隐藏向量。选择状态与候选记录分别编码为
 \begin{align}
-  \mathbf e_{\theta}^{\mathrm{task}}(x)
+  \mathbf e_{\theta}^{\mathrm{state}}(x,i_{<j})
   &=
   \operatorname{normalize}
   \left(
     \operatorname{LastHidden}
     \left[
       \operatorname{Qwen}_{\theta}
-      \left(\operatorname{Serialize}_{\mathrm{task}}(x)\right)
+      \left(\operatorname{Serialize}_{\mathrm{state}}(x,i_{<j})\right)
     \right]
   \right),\\
   \mathbf e_{\theta}^{\mathrm{hist}}(i)
@@ -364,20 +383,25 @@ student、TA 和 teacher 不共享 LoRA。
   \right).
 \end{align}
 其中 \(\operatorname{normalize}(\mathbf z)=\mathbf z/\|\mathbf z\|_2\)。
-历史记录 \(i\) 对当前任务 \(x\) 的分数是两者的余弦相似度：
+第 \(j\) 步，历史记录 \(i\) 的分数是它与当前选择状态的余弦相似度：
 \begin{equation}
-  s_{\theta}(x,i)
+  s_{\theta}(x,i\mid i_{<j})
   =
-  \left(\mathbf e_{\theta}^{\mathrm{task}}(x)\right)^\top
+  \left(\mathbf e_{\theta}^{\mathrm{state}}(x,i_{<j})\right)^\top
   \mathbf e_{\theta}^{\mathrm{hist}}(i).
   \label{eq:score}
 \end{equation}
-\(\mathbf e_{\theta}^{\mathrm{task}}\) 和
+\(\mathbf e_{\theta}^{\mathrm{state}}\) 和
 \(\mathbf e_{\theta}^{\mathrm{hist}}\) 只是任务与历史记录的表示，\textbf{不是}
 Transformer attention 内部的 query、key 或 value。
 
-\(\mathtt{STOP}\) 也用固定文本编码成一个候选。没有新分类头。式~\eqref{eq:pointer}
-中的 \(T\) 控制 cosine score 的温度；首个实现使用 \(T=0.05\)。
+每选入一条记录，式~\eqref{eq:selection-state} 都会重新编码整个已选前缀。因此，同一候选
+在不同 \(i_{<j}\) 下可以获得不同分数：重复或冲突的记录可以降分，互补记录可以升分，
+高阶交互也可以通过前缀表示进入下一步决策。
+
+\(\mathtt{STOP}\) 也用固定文本编码成一个候选，其分数同样依赖当前 \(i_{<j}\)。
+没有新分类头。式~\eqref{eq:pointer} 中的 \(T\) 控制 cosine score 的温度；首个实现使用
+\(T=0.05\)。
 
 \subsection{动作概率}
 
@@ -399,10 +423,10 @@ Transformer attention 内部的 query、key 或 value。
 \begin{equation}
   p_{\theta}(i_j\mid x,i_{<j})
   =
-  \frac{\exp(s_{\theta}(x,i_j)/T)}
-  {\exp(s_{\theta}(x,\mathtt{STOP})/T)
+  \frac{\exp(s_{\theta}(x,i_j\mid i_{<j})/T)}
+  {\exp(s_{\theta}(x,\mathtt{STOP}\mid i_{<j})/T)
    +\sum_{\ell\in V_j(x)}
-    \exp(s_{\theta}(x,\ell)/T)}.
+    \exp(s_{\theta}(x,\ell\mid i_{<j})/T)}.
   \label{eq:pointer}
 \end{equation}
 选中 \(\mathtt{STOP}\) 后结束。完整动作概率仍使用原符号：
@@ -520,11 +544,13 @@ Judge 输入保持原 PDF 的定义：
 
 部署时：
 \begin{enumerate}
-  \item 对 \(\Dtrain\) 中候选记录计算式~\eqref{eq:score}；
-  \item 按式~\eqref{eq:pointer} 选择索引，直到 \(\mathtt{STOP}\)；
-  \item 由式~\eqref{eq:policy} 得到 \(\policy(a\mid x)\)；
-  \item 运行 \(y_a=\FA.\operatorname{Execute}(a,x)\)；
-  \item 返回 \(y_a\)。
+  \item 初始化空前缀 \(i_{<1}=()\)；
+  \item 第 \(j\) 步按式~\eqref{eq:selection-state} 编码当前任务与已选前缀，并按
+    式~\eqref{eq:score} 重新计算合法候选和 \(\mathtt{STOP}\) 的条件分数；
+  \item 按式~\eqref{eq:pointer} 选择下一项。若选中索引，就把它加入前缀并返回第二步；
+    若选中 \(\mathtt{STOP}\)，则结束；
+  \item 由式~\eqref{eq:policy} 得到完整动作 \(a\) 的概率；
+  \item 运行 \(y_a=\FA.\operatorname{Execute}(a,x)\)，并返回 \(y_a\)。
 \end{enumerate}
 
 FA 不读取完整 \(P_u\)，除非该版本被单独作为基线。策略输出中没有自然语言控制指令。
@@ -546,8 +572,10 @@ FA 不读取完整 \(P_u\)，除非该版本被单独作为基线。策略输出
     普通相似度检索是否已经足够？ \\
     \(\basepolicy+\FA\) &
     未训练的 0.6B 选择器表现如何？ \\
+    独立打分选择器 + FA &
+    不读取 \(i_{<j}\) 时，忽略记录间交互会损失多少？ \\
     \(\policy+\FA\) &
-    下游执行奖励是否学会了更好的历史选择？ \\
+    下游执行奖励是否学会了条件选择与记录间交互？ \\
     全量 \(\Dtrain+\FA\) &
     选择是否优于把所有历史塞给 FA？ \\
     原 18 动作 + Compiler + FA &
