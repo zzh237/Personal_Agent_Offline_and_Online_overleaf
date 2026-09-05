@@ -1,0 +1,173 @@
+@incollection{Bengio+chapter2007,
+author = {Bengio, Yoshua and LeCun, Yann},
+booktitle = {Large Scale Kernel Machines},
+publisher = {MIT Press},
+title = {Scaling Learning Algorithms Towards {AI}},
+year = {2007}
+}
+
+@article{Hinton06,
+author = {Hinton, Geoffrey E. and Osindero, Simon and Teh, Yee Whye},
+journal = {Neural Computation},
+pages = {1527--1554},
+title = {A Fast Learning Algorithm for Deep Belief Nets},
+volume = {18},
+year = {2006}
+}
+
+@book{goodfellow2016deep,
+title={Deep learning},
+author={Goodfellow, Ian and Bengio, Yoshua and Courville, Aaron and Bengio, Yoshua},
+volume={1},
+year={2016},
+publisher={MIT Press}
+}
+
+% === Cached citations from gather_citations ===
+@article{li2024personalizedrlhf,
+  title={Personalized Language Modeling from Personalized Human Feedback},
+  author={Li, Xinyu and Zhou, Ruiyang and Lipton, Zachary C. and Leqi, Liu},
+  journal={arXiv preprint arXiv:2402.05133},
+  year={2024}
+}
+
+@article{gao2024cipher,
+  title={Aligning LLM Agents by Learning Latent Preference from User Edits},
+  author={Gao, Ge and Taymanov, Alexey and Salinas, Eduardo and Mineiro, Paul and Misra, Dipendra},
+  journal={arXiv preprint arXiv:2404.15269},
+  year={2024}
+}
+
+@article{hebert2024persoma,
+  title={{PERSOMA}: {PER}sonalized {SO}ft Pro{M}pt {A}dapter Architecture for Personalized Language Prompting},
+  author={Hebert, Liam and Sayana, Krishna and Jash, Ambarish and Karatzoglou, Alexandros and Sodhi, Sukhdeep and Doddapaneni, Sumanth and Cai, Yanli and Kuzmin, Dima},
+  journal={arXiv preprint arXiv:2408.00960},
+  year={2024}
+}
+
+@article{lv2025costeer,
+  title={{CoSteer}: Collaborative Decoding-Time Personalization via Local Delta Steering},
+  author={Lv, Hang and Liang, Sheng and Wang, Hao and Gu, Hongchao and Wu, Yaxiong and Guo, Wei and Lian, Defu and Liu, Yong and Chen, Enhong},
+  journal={arXiv preprint arXiv:2507.04756},
+  year={2025}
+}
+
+@inproceedings{hu2022lora,
+  title={{LoRA}: Low-Rank Adaptation of Large Language Models},
+  author={Hu, Edward J. and Shen, Yelong and Wallis, Phillip and Allen-Zhu, Zeyuan and Li, Yuanzhi and Wang, Shean and Wang, Lu and Chen, Weizhu},
+  booktitle={International Conference on Learning Representations},
+  year={2022}
+}
+
+% Qwen3 Technical Report introducing the Qwen3 model family (0.6B to 235B parameters, dense and MoE), including the Qwen3-0.6B model used as the local Personal Card extractor backbone in our system. Cite in the Offline Data and Training section and wherever the local extractor model is introduced, to credit the model creators.
+@inproceedings{yang2025qwen3tr,
+ author = {An Yang and Anfeng Li and Baosong Yang and Beichen Zhang and Binyuan Hui and Bo Zheng and Bowen Yu and Chang Gao and Chengen Huang and Chenxu Lv and Chujie Zheng and Dayiheng Liu and Fan Zhou and Fei Huang and Feng Hu and Hao Ge and Haoran Wei and Huan Lin and Jialong Tang and Jian Yang and Jianhong Tu and Jianwei Zhang and Jianxin Yang and Jiaxin Yang and Jingren Zhou and Jingren Zhou and Junyan Lin and K. Dang and Keqin Bao and Ke‐Pei Yang and Le Yu and Li-Chun Deng and Mei Li and Min Xue and Mingze Li and Pei Zhang and Peng Wang and Qin Zhu and Rui Men and Ruize Gao and Shixuan Liu and Shuang Luo and Tianhao Li and Tianyi Tang and Wenbiao Yin and Xingzhang Ren and Xinyu Wang and Xinyu Zhang and Xuancheng Ren and Yang Fan and Yang Su and Yi-Chao Zhang and Ying-Er Zhang and Yu Wan and Yuqiong Liu and Zekun Wang and Zeyu Cui and Zhenru Zhang and Zhipeng Zhou and Zihan Qiu},
+ title = {Qwen3 Technical Report},
+ year = {2025}
+}
+
+% Zheng et al. (NeurIPS 2023) establish LLM-as-a-judge evaluation with MT-Bench and Chatbot Arena, documenting position bias, verbosity bias, and self-enhancement bias in LLM judges. Cite in the Evaluation section to justify our protocol of judging each answer pair twice with reversed answer order and treating order-inconsistent pairs separately, and in the Limitations section to acknowledge the risk of self-preference when Sonnet 4.5 serves as both executor and judge.
+@article{zheng2023judginglw,
+ author = {Lianmin Zheng and Wei-Lin Chiang and Ying Sheng and Siyuan Zhuang and Zhanghao Wu and Yonghao Zhuang and Zi Lin and Zhuohan Li and Dacheng Li and E. Xing and Haotong Zhang and Joseph E. Gonzalez and Ion Stoica},
+ booktitle = {Neural Information Processing Systems},
+ journal = {ArXiv},
+ title = {Judging LLM-as-a-judge with MT-Bench and Chatbot Arena},
+ volume = {abs/2306.05685},
+ year = {2023}
+}
+
+% MemGPT (Packer et al., 2023) introduces virtual context management for LLMs, enabling long-term memory across multi-session chat by moving information between memory tiers, so conversational agents can remember and evolve through extended user interactions. Cite in the Related Work and 'From Cards to a Cross-Session Profile' sections to situate our local SQLite card store as a compact, discrete, rule-gated alternative to general memory-augmented LLM agent architectures: our profile requires repeated support and confidence thresholds before any preference transfers, and the remote executor never sees raw history.
+@article{packer2023memgpttl,
+ author = {Charles Packer and Vivian Fang and Shishir G. Patil and Kevin Lin and Sarah Wooders and Joseph Gonzalez},
+ booktitle = {arXiv.org},
+ journal = {ArXiv},
+ title = {MemGPT: Towards LLMs as Operating Systems},
+ volume = {abs/2310.08560},
+ year = {2023}
+}
+
+% Salemi et al. (ACL 2023) introduce LaMP, the standard benchmark for personalized LLM outputs across seven classification and generation tasks, with retrieval-augmentation approaches that fetch items from a user's profile to condition the model. Cite in Related Work to anchor the LLM personalization literature and to highlight the gap our study addresses: LaMP-style methods retrieve and send raw user history into the remote model's prompt, whereas our local extractor distills history into a compact Personal Card profile so the frozen remote executor never sees the original conversations. Salemi and Zamani (ICTIR 2024) systematically compare retrieval-augmented generation and parameter-efficient fine-tuning for privacy-preserving LLM personalization on LaMP, finding RAG helps cold-start users while PEFT benefits from more user data. Cite in the Problem and Related Work sections to support the privacy motivation for keeping personal data local, and to contrast our design (local PEFT-trained extractor plus a derived discrete profile) with both RAG- and PEFT-based personalization of the executor itself.
+@article{salemi2023lampwl,
+ author = {Alireza Salemi and Sheshera Mysore and Michael Bendersky and Hamed Zamani},
+ booktitle = {Annual Meeting of the Association for Computational Linguistics},
+ journal = {ArXiv},
+ title = {LaMP: When Large Language Models Meet Personalization},
+ volume = {abs/2304.11406},
+ year = {2023}
+}
+
+@article{salemi2024comparingra,
+ author = {Alireza Salemi and Hamed Zamani},
+ booktitle = {International Conference on the Theory of Information Retrieval},
+ journal = {Proceedings of the 2025 International ACM SIGIR Conference on Innovative Concepts and Theories in Information Retrieval (ICTIR)},
+ title = {Comparing Retrieval-Augmentation and Parameter-Efficient Fine-Tuning for Privacy-Preserving Personalization of Large Language Models},
+ year = {2024}
+}
+
+% Efron (1979) introduces the bootstrap resampling method, the foundational statistical technique underlying our interval estimates. Cite in the Cross-session transfer evaluation section, where we resample the eight paired holdout tasks 20,000 times with a fixed seed and report percentile 95% confidence intervals for the paired task-quality delta ([-0.6875, 0.5625]) and preference-fit delta ([-0.25, 1.5]), both of which include zero and mark the online results as exploratory.
+@article{efron1979bootstrapma,
+ author = {B. Efron},
+ journal = {Annals of Statistics},
+ pages = {1-26},
+ title = {Bootstrap Methods: Another Look at the Jackknife},
+ volume = {7},
+ year = {1979}
+}
+
+% Dwork, McSherry, Nissim, and Smith (TCC 2006) introduce differential privacy, showing that privacy can be preserved by calibrating noise to the sensitivity of a query function. Cite in the Limitations section, where we explicitly state that keeping raw chat history local reduces data exposure but does not provide differential privacy or any formal guarantee that the derived preference profile reveals no sensitive information; citing the formal definition makes this claim boundary precise. Also cite as a future-work direction of adding formal privacy guarantees to the card extraction and profile rendering pipeline.
+@article{dwork2006calibratingnt,
+ author = {C. Dwork and Frank McSherry and Kobbi Nissim and Adam D. Smith},
+ booktitle = {Theory of Cryptography Conference},
+ journal = {J. Priv. Confidentiality},
+ pages = {17-51},
+ title = {Calibrating Noise to Sensitivity in Private Data Analysis},
+ volume = {7},
+ year = {2006}
+}
+
+% Xu et al. (ACL 2021, 'Beyond Goldfish Memory') establish the long-term multi-session open-domain conversation setting, releasing a human-human multi-session dataset and showing that models which summarize and recall previous sessions outperform standard architectures. Cite in the Problem and Related Work sections to ground the cross-session preference transfer setting and to note that prior multi-session work stores or retrieves raw session content, whereas our local extractor distills feedback into compact Personal Cards so the frozen remote executor never sees old conversations. Chhikara et al. (ECAI 2025, 'Mem0') present a production memory architecture that dynamically extracts, consolidates, and retrieves salient facts from ongoing conversations for multi-session coherence, with large latency and token-cost savings over full-context methods. Cite in Related Work and in the 'From Cards to a Cross-Session Profile' section as a closely related memory-extraction approach: like Mem0, we distill conversations into structured records, but our store is a local SQLite database with confidence and repeated-support gating, and only a derived preference instruction, never retrieved history, is sent to the remote model.
+@article{xu2021beyondgm,
+ author = {Jing Xu and Arthur Szlam and J. Weston},
+ booktitle = {Annual Meeting of the Association for Computational Linguistics},
+ journal = {ArXiv},
+ title = {Beyond Goldfish Memory: Long-Term Open-Domain Conversation},
+ volume = {abs/2107.07567},
+ year = {2021}
+}
+
+@article{chhikara2025mem0bp,
+ author = {P. Chhikara and Dev Khant and Saket Aryan and Taranjeet Singh and Deshraj Yadav},
+ booktitle = {European Conference on Artificial Intelligence},
+ pages = {2993-3000},
+ title = {Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory},
+ year = {2025}
+}
+
+% Ouyang et al. (NeurIPS 2022) introduce InstructGPT, the canonical approach for aligning language models with user intent via supervised fine-tuning and reinforcement learning from human feedback (RLHF). Cite in the Problem and Related Work sections to frame the dominant paradigm of adapting LLM behavior from human feedback by updating model weights, and to contrast with our design: user corrections are never used to update the remote executor's weights; instead, Sonnet 4.5 stays frozen while a small local Qwen3-0.6B extractor distills feedback into discrete Personal Cards and a rule-gated profile delivered through the standard prompt interface. Also relevant to the Limitations section, where we note the online stage updates only local memory, not model weights.
+@article{ouyang2022traininglm,
+ author = {Long Ouyang and Jeff Wu and Xu Jiang and Diogo Almeida and Carroll L. Wainwright and Pamela Mishkin and Chong Zhang and S. Agarwal and Katarina Slama and Alex Ray and John Schulman and Jacob Hilton and Fraser Kelton and Luke E. Miller and M. Simens and Amanda Askell and Peter Welinder and P. Christiano and Jan Leike and Ryan J. Lowe},
+ booktitle = {Neural Information Processing Systems},
+ journal = {ArXiv},
+ title = {Training language models to follow instructions with human feedback},
+ volume = {abs/2203.02155},
+ year = {2022}
+}
+
+% Panickssery, Bowman, and Feng (NeurIPS 2024) show that LLM evaluators exhibit self-preference bias, scoring their own outputs higher than others' even when human annotators rate them as equal quality, and demonstrate a causal link between self-recognition capability and the strength of this bias. Cite in the Limitations section, where Sonnet 4.5 serves as both the answer executor and the pairwise judge in our cross-session transfer evaluation; because both the baseline and profile-guided answers come from the same frozen model, self-preference could inflate agreement or mask real differences, making the exploratory 5/2/1 win-rate result subject to this documented judge bias. Also relevant in the Evaluation section alongside Zheng et al. (2023) to motivate the double-judging protocol with reversed answer order and the separate reporting of order-inconsistent pairs, and as a future-work pointer toward using an independent judge model family.
+@article{panickssery2024llmer,
+ author = {Arjun Panickssery and Samuel R. Bowman and Shi Feng},
+ booktitle = {Neural Information Processing Systems},
+ journal = {ArXiv},
+ title = {LLM Evaluators Recognize and Favor Their Own Generations},
+ volume = {abs/2404.13076},
+ year = {2024}
+}
+
+% Wang et al. (ACL 2023) introduce Self-Instruct, the canonical framework for using a language model's own generations to produce instruction data for fine-tuning, with filtering to remove invalid or redundant samples. Cite in the Failure Analysis section to ground the cancelled local 7B teacher branch, in which a larger local model was used to rewrite user corrections into broader preference rules intended to train a student extractor; our observation that 201 of 216 teacher-generated labels were overly task-specific and copied literal values (leading us to cancel the branch and train no student) is a concrete failure mode of this model-generated-data paradigm. Also relevant as a future-work pointer on improved filtering of teacher-generated preference rules.
+@article{wang2022selfinstructal,
+ author = {Yizhong Wang and Yeganeh Kordi and Swaroop Mishra and Alisa Liu and Noah A. Smith and Daniel Khashabi and Hannaneh Hajishirzi},
+ booktitle = {Annual Meeting of the Association for Computational Linguistics},
+ pages = {13484-13508},
+ title = {Self-Instruct: Aligning Language Models with Self-Generated Instructions},
+ year = {2022}
+}
