@@ -1,0 +1,84 @@
+\begin{tikzpicture}[
+  x=1cm,
+  y=1cm,
+  font=\sffamily,
+  >=Latex,
+  evidence/.style={
+    rounded corners=4pt,
+    draw=black!78,
+    line width=0.9pt,
+    minimum width=2.05cm,
+    minimum height=0.72cm,
+    align=center,
+    font=\small\sffamily
+  },
+  outcome/.style={
+    rounded corners=5pt,
+    line width=1.0pt,
+    minimum width=3.05cm,
+    minimum height=0.86cm,
+    align=center,
+    font=\bfseries\small\sffamily
+  },
+  flow/.style={->,line width=1.25pt,draw=black!72}
+]
+
+\node[font=\bfseries\small\sffamily,text=black!70] at (2.30,5.27)
+  {Observed cards};
+\node[font=\bfseries\small\sffamily,text=black!70] at (8.35,5.27)
+  {Distinct-source support (minimum 2)};
+\node[font=\bfseries\small\sffamily,text=black!70] at (14.25,5.27)
+  {Transfer decision};
+
+\fill[pcoral!7,rounded corners=7pt] (0.00,3.55) rectangle (17.05,5.00);
+\draw[pcoral!50!black,line width=0.8pt,rounded corners=7pt]
+  (0.00,3.55) rectangle (17.05,5.00);
+\fill[pamber!8,rounded corners=7pt] (0.00,1.85) rectangle (17.05,3.30);
+\draw[pamber!62!black,line width=0.8pt,rounded corners=7pt]
+  (0.00,1.85) rectangle (17.05,3.30);
+\fill[pgreen!8,rounded corners=7pt] (0.00,0.15) rectangle (17.05,1.60);
+\draw[pgreen!52!black,line width=0.8pt,rounded corners=7pt]
+  (0.00,0.15) rectangle (17.05,1.60);
+
+\node[font=\bfseries\small\sffamily,text=pcoral!78!black,anchor=west]
+  at (0.25,4.68) {A.\ One correction};
+\node[evidence,fill=white] (a-h1) at (2.55,4.14)
+  {\faIcon{address-card}\quad Card $h_1$};
+\node[font=\bfseries\Large\sffamily,text=pcoral!80!black]
+  (a-count) at (8.35,4.14) {$1$};
+\node[outcome,draw=pcoral!75!black,fill=pcoral!13,text=pcoral!82!black]
+  (a-out) at (14.25,4.14) {\faIcon{lock}\quad Keep local};
+\draw[flow] (a-h1) -- (a-count);
+\draw[flow] (a-count) -- (a-out);
+
+\node[font=\bfseries\small\sffamily,text=pamber!68!black,anchor=west]
+  at (0.25,2.98) {B.\ Same source reused};
+\node[evidence,fill=white] (b-h1a) at (1.68,2.44)
+  {Card $h_1$};
+\node[evidence,fill=white] (b-h1b) at (4.18,2.44)
+  {Card $h_1$};
+\draw[pcoral!82!black,line width=1.3pt] (3.33,2.11) -- (4.98,2.77);
+\draw[pcoral!82!black,line width=1.3pt] (3.33,2.77) -- (4.98,2.11);
+\node[font=\bfseries\Large\sffamily,text=pamber!72!black]
+  (b-count) at (8.35,2.44) {$1$};
+\node[outcome,draw=pamber!72!black,fill=pamber!17,text=pamber!66!black]
+  (b-out) at (14.25,2.44) {\faIcon{ban}\quad Duplicate ignored};
+\draw[flow] (b-h1b) -- (b-count);
+\draw[flow] (b-count) -- (b-out);
+
+\node[font=\bfseries\small\sffamily,text=pgreen!42!black,anchor=west]
+  at (0.25,1.28) {C.\ Two separate sessions};
+\node[evidence,fill=white] (c-h1) at (1.68,0.74)
+  {Card $h_1$};
+\node[evidence,fill=white] (c-h2) at (4.18,0.74)
+  {Card $h_2$};
+\node[font=\bfseries\Large\sffamily,text=pgreen!48!black]
+  (c-count) at (8.35,0.74) {$2$};
+\node[outcome,draw=pgreen!55!black,fill=pgreen!18,text=pgreen!38!black,
+      minimum width=4.10cm]
+  (c-out) at (14.25,0.74)
+  {\faIcon{check-circle}\quad Add reusable rule to profile};
+\draw[flow] (c-h2) -- (c-count);
+\draw[flow,draw=pgreen!48!black] (c-count) -- (c-out);
+
+\end{tikzpicture}

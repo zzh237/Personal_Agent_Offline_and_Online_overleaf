@@ -1,0 +1,135 @@
+\begin{tikzpicture}[
+  x=1cm,
+  y=1cm,
+  font=\sffamily,
+  >=Latex,
+  panel/.style={
+    rounded corners=5pt,
+    draw=black!75,
+    line width=0.8pt,
+    fill=white
+  }
+]
+
+% Three panels.
+\node[panel, minimum width=5.35cm, minimum height=6.15cm, anchor=south west]
+  (p1) at (0,0) {};
+\node[panel, minimum width=5.35cm, minimum height=6.15cm, anchor=south west]
+  (p2) at (5.65,0) {};
+\node[panel, minimum width=5.35cm, minimum height=6.15cm, anchor=south west]
+  (p3) at (11.30,0) {};
+
+% Panel headers.
+\fill[pcyan!72, rounded corners=4pt] (0.02,5.42) rectangle (5.33,6.13);
+\fill[pamber!82, rounded corners=4pt] (5.67,5.42) rectangle (10.98,6.13);
+\fill[pgreen!62, rounded corners=4pt] (11.32,5.42) rectangle (16.63,6.13);
+\node[anchor=west, font=\bfseries\small\sffamily] at (0.25,5.77)
+  {A.\ Local card extraction};
+\node[anchor=west, font=\bfseries\small\sffamily] at (5.90,5.77)
+  {B.\ Cross-session outcomes};
+\node[anchor=west, font=\bfseries\small\sffamily] at (11.55,5.77)
+  {C.\ Paired score changes};
+
+% Panel A bars.
+\node[anchor=west, font=\scriptsize\sffamily, text=black!65] at (0.32,5.12)
+  {LoRA extractor, 183 held-out examples};
+\foreach \lab/\val/\yy in {
+  {Valid JSON}/1.000/4.60,
+  {Direction}/1.000/4.03,
+  {Scope}/0.995/3.46,
+  {Likert exact}/0.831/2.89,
+  {Feedback F1}/0.732/2.32,
+  {Task type}/0.705/1.75
+}{
+  \node[anchor=east, font=\scriptsize\sffamily] at (1.42,\yy) {\lab};
+  \fill[black!8, rounded corners=1pt] (1.55,\yy-0.12) rectangle (4.72,\yy+0.12);
+  \fill[pcyan!85!black, rounded corners=1pt]
+    (1.55,\yy-0.12) rectangle ({1.55+3.17*\val},\yy+0.12);
+  \pgfmathsetmacro{\pct}{100*\val}
+  \node[anchor=west, font=\scriptsize\sffamily] at (4.78,\yy)
+    {\pgfmathprintnumber[fixed,precision=1]{\pct}\%};
+}
+\node[rounded corners=3pt, draw=pcoral!75!black, fill=pcoral!10,
+      align=center, font=\scriptsize\sffamily, minimum width=4.52cm,
+      minimum height=0.53cm] at (2.68,0.88)
+  {Untouched Qwen: \textbf{0\% valid card JSON}\\[-1pt]
+   \scriptsize structural control, not a strong baseline};
+
+% Panel B stacked bars.
+\node[anchor=west, font=\scriptsize\sffamily, text=black!65] at (5.97,5.12)
+  {Eight tasks in each protocol};
+\node[anchor=east, font=\scriptsize\sffamily] at (7.25,4.38) {Single card};
+\node[anchor=east, font=\scriptsize\sffamily] at (7.25,3.42) {Repeated support};
+
+% Single-card bar: 3 / 3 / 1 / 1.
+\fill[pgreen!80!black] (7.42,4.18) rectangle (8.61,4.58);
+\fill[pcoral!82!black] (8.61,4.18) rectangle (9.80,4.58);
+\fill[pamber!95!black] (9.80,4.18) rectangle (10.20,4.58);
+\fill[black!35] (10.20,4.18) rectangle (10.60,4.58);
+\node[font=\bfseries\scriptsize\sffamily, text=white] at (8.02,4.38) {3};
+\node[font=\bfseries\scriptsize\sffamily, text=white] at (9.21,4.38) {3};
+\node[font=\bfseries\scriptsize\sffamily] at (10.00,4.38) {1};
+\node[font=\bfseries\scriptsize\sffamily, text=white] at (10.40,4.38) {1};
+
+% Repeated-support bar: 5 / 2 / 0 / 1.
+\fill[pgreen!80!black] (7.42,3.22) rectangle (9.40,3.62);
+\fill[pcoral!82!black] (9.40,3.22) rectangle (10.20,3.62);
+\fill[black!35] (10.20,3.22) rectangle (10.60,3.62);
+\node[font=\bfseries\scriptsize\sffamily, text=white] at (8.41,3.42) {5};
+\node[font=\bfseries\scriptsize\sffamily, text=white] at (9.80,3.42) {2};
+\node[font=\bfseries\scriptsize\sffamily, text=white] at (10.40,3.42) {1};
+
+% Legend.
+\fill[pgreen!80!black] (5.98,2.63) rectangle (6.20,2.85);
+\node[anchor=west, font=\scriptsize\sffamily] at (6.27,2.74) {profile};
+\fill[pcoral!82!black] (7.37,2.63) rectangle (7.59,2.85);
+\node[anchor=west, font=\scriptsize\sffamily] at (7.66,2.74) {baseline};
+\fill[pamber!95!black] (8.93,2.63) rectangle (9.15,2.85);
+\node[anchor=west, font=\scriptsize\sffamily] at (9.22,2.74) {tie};
+\fill[black!35] (9.90,2.63) rectangle (10.12,2.85);
+\node[anchor=west, font=\scriptsize\sffamily] at (10.19,2.74) {order flip};
+
+\node[rounded corners=3pt, fill=pgreen!12, draw=pgreen!55!black,
+      align=center, font=\scriptsize\sffamily, minimum width=4.52cm,
+      minimum height=0.88cm] at (8.33,1.70)
+  {\textbf{Repeated support: 5 of 7}\\[-1pt]
+   position-consistent comparisons\\[-1pt]
+   favor the profile};
+\node[align=center, font=\scriptsize\sffamily, text=black!70] at (8.33,0.72)
+  {Single-card transfer shows no net gain.\\Repeated evidence changes the direction,\\but the sample remains small.};
+
+% Panel C interval axis.
+\node[anchor=west, font=\scriptsize\sffamily, text=black!65] at (11.62,5.12)
+  {Profile minus baseline; 20,000 paired resamples};
+\draw[->, black!75, line width=0.7pt] (11.75,1.55) -- (16.25,1.55);
+\foreach \x/\lab in {11.90/-1.0,12.93/-0.5,13.96/0,14.99/0.5,16.02/1.0}{
+  \draw[black!60] (\x,1.47) -- (\x,1.63);
+  \node[font=\tiny\sffamily, anchor=north] at (\x,1.42) {\lab};
+}
+\draw[black!35, dashed, line width=0.7pt] (13.96,1.72) -- (13.96,4.95);
+
+% Task quality interval [-0.6875, 0.5625], mapped 2.06 cm per unit.
+\node[anchor=east, font=\scriptsize\sffamily] at (12.45,4.20) {Task quality};
+\draw[premote!80!black, line width=2.1pt] (12.54,3.88) -- (15.12,3.88);
+\draw[premote!80!black, line width=0.9pt] (12.54,3.69) -- (12.54,4.07);
+\draw[premote!80!black, line width=0.9pt] (15.12,3.69) -- (15.12,4.07);
+\fill[premote!80!black] (13.96,3.88) circle (2.2pt);
+\node[anchor=west, font=\scriptsize\sffamily, text=premote!70!black]
+  at (12.48,3.38) {$0.00\;[-0.69,\ 0.56]$};
+
+% Preference interval [-0.25, 1.5], clipped axis extended to 1.5.
+\node[anchor=east, font=\scriptsize\sffamily] at (12.45,2.82) {Preference fit};
+\draw[pgreen!75!black, line width=2.1pt] (13.45,2.50) -- (16.46,2.50);
+\draw[pgreen!75!black, line width=0.9pt] (13.45,2.31) -- (13.45,2.69);
+\draw[pgreen!75!black, line width=0.9pt] (16.46,2.31) -- (16.46,2.69);
+\fill[pgreen!75!black] (15.25,2.50) circle (2.2pt);
+\node[anchor=west, font=\scriptsize\sffamily, text=pgreen!55!black]
+  at (12.48,2.00) {$+0.63\;[-0.25,\ 1.50]$};
+
+\node[rounded corners=3pt, draw=pamber!75!black, fill=pamber!16,
+      align=center, font=\scriptsize\sffamily, minimum width=4.52cm,
+      minimum height=0.79cm] at (13.98,0.84)
+  {\textbf{Both intervals include zero.}\\[-1pt]
+   Feasibility evidence, not a reliable gain.};
+
+\end{tikzpicture}

@@ -1,0 +1,185 @@
+\section{Prompts and Representative Data}
+\label{app:prompts-data}
+
+The following material records the prompts and data contract used in the
+reported runs. The local extractor prompt was written in Chinese because the
+archive is mainly Chinese. We show a faithful English rendering below. The
+exact UTF-8 production text is included in
+\path{appendix/extractor_prompt_zh.txt}.
+
+\subsection{Local Extractor Prompt}
+
+\begin{PromptBox}[Local Personal Card extractor]
+\lstinputlisting[style=prompt]{appendix/extractor_prompt_en.txt}
+\end{PromptBox}
+
+The user message is the observation serialized as sorted JSON. The model must
+return one JSON object. The validator then checks all enums, numeric ranges,
+length limits, evidence type, and the fixed \texttt{local\_only} privacy value.
+
+\subsection{Claude CLI Executor Prompt}
+
+\begin{PromptBox}[Frozen executor system and user template]
+\lstinputlisting[style=prompt]{appendix/executor_prompt.txt}
+\end{PromptBox}
+
+The profile condition appends the rendered profile to the system prompt. The
+baseline uses the same system prompt without the profile. Both receive the same
+user template and current task.
+
+\subsection{Claude CLI Invocation}
+
+\begin{PromptBox}[Command used for executor and judge calls]
+\lstinputlisting[style=prompt]{appendix/claude_cli_command.txt}
+\end{PromptBox}
+
+All 32 remote calls use this adapter and the same Sonnet 4.5 model through
+Amazon Bedrock. Baseline and profile answers run in separate processes. The
+judge also starts fresh for each answer order. The recorded envelopes report
+one or two turns, no web-search requests, and no permission denials.
+
+\subsection{Pairwise Judge Prompt}
+
+\begin{PromptBox}[Order-swapped pairwise judge]
+\lstinputlisting[style=prompt]{appendix/judge_prompt.txt}
+\end{PromptBox}
+
+The judge returns \texttt{winner} in
+\{\texttt{A}, \texttt{B}, \texttt{tie}\}, four integer scores from 1 to 5, and
+a short reason. We run the same comparison again with the answers swapped. A
+pair is position-consistent only when both calls select the same underlying
+answer.
+
+\subsection{Dataset Files}
+
+\begin{table}[H]
+\centering
+\small
+\caption{Files used for the 914-example balanced dataset.}
+\label{tab:dataset-files}
+\begin{tabularx}{\linewidth}{>{\bfseries}p{2.65cm}rY}
+\toprule
+\rowcolor{pamber!25}
+File & Rows & Role \\
+\midrule
+\path{train.jsonl} & 582 & Adapter training \\
+\path{validation.jsonl} & 149 & Loss monitoring and model selection \\
+\path{test.jsonl} & 183 & Final field-level extraction metrics \\
+\path{dataset_manifest.json} & 1 & Source counts, split counts, seed, and
+conversation-disjoint flag \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Each JSONL row contains its source class, conversation identifier, observation,
+and target card. Explicit corrections and verified revisions carry preference
+evidence. Category-only rows teach abstention.
+
+\subsection{Representative Training Records}
+
+The examples below come from the balanced dataset. We shorten and translate
+the natural-language fields for publication. The source class, card fields,
+scores, and transfer decision are unchanged.
+
+\begin{table}[H]
+\centering
+\small
+\caption{A direct correction produces a negative preference card.}
+\label{tab:record-correction}
+\begin{tabularx}{\linewidth}{>{\bfseries}p{2.45cm}Y}
+\toprule
+\rowcolor{pcoral!18}
+Field & Value \\
+\midrule
+Source & \texttt{explicit\_correction} \\
+Observation & A scheduling request is translated; the user asks for a more
+formal version. \\
+Task / facet & writing and editing / \texttt{tone\_style} \\
+Direction & \texttt{dislike}, Likert 2, confidence 0.88 \\
+Scope & \texttt{task\_type} \\
+Instruction & Use the requested tone and style; avoid stiff or templated
+phrasing. \\
+Evidence policy & \texttt{explicit\_correction}; \texttt{local\_only} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[H]
+\centering
+\small
+\caption{A locally verified revision provides weaker positive evidence.}
+\label{tab:record-revision}
+\begin{tabularx}{\linewidth}{>{\bfseries}p{2.45cm}Y}
+\toprule
+\rowcolor{pcyan!22}
+Field & Value \\
+\midrule
+Source & \texttt{verified\_revision} \\
+Observation & The user asks for the concrete difference between two projection
+matrices. The revision explains definitions, geometry, and the resulting
+test. The requested-change check passes. \\
+Task / facets & knowledge explanation /
+\texttt{verbosity}, \texttt{detail\_depth}, \texttt{correctness},
+\texttt{constraint\_adherence} \\
+Direction & \texttt{like}, Likert 4, confidence 0.74 \\
+Scope & \texttt{task\_type} \\
+Instruction & Give concrete steps and enough detail without omitting key
+parts. \\
+Evidence policy & \texttt{verified\_revision}; \texttt{local\_only} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[H]
+\centering
+\small
+\caption{A task label without feedback teaches abstention.}
+\label{tab:record-abstention}
+\begin{tabularx}{\linewidth}{>{\bfseries}p{2.45cm}Y}
+\toprule
+\rowcolor{pgray}
+Field & Value \\
+\midrule
+Source & \texttt{category\_label} \\
+Observation & A short writing task with no assistant answer and no user
+feedback. \\
+Task / facet & writing and editing / \texttt{no\_explicit\_feedback} \\
+Direction & \texttt{uncertain}, Likert 3, confidence 0.40 \\
+Scope & \texttt{task\_instance} \\
+Instruction & Answer only the current request; do not infer a lasting
+preference. \\
+Transfer decision & Ineligible for the profile store \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Rendered Profile Example}
+
+The following profile was used in the repeated-support run for a knowledge
+explanation task. It is an English rendering of the JSON sent to the executor.
+
+\begin{PromptBox}[Compact profile sent with the current task]
+\begin{lstlisting}[style=prompt]
+{
+  "task_type": "knowledge explanation",
+  "preferences": [{
+    "instruction": "Give concrete steps and essential details; check key
+      facts and calculations; state uncertainty; follow explicit keep,
+      delete, and prohibition conditions.",
+    "feedback_types": [
+      "constraint_adherence", "correctness", "detail_depth",
+      "format_structure", "verbosity"
+    ],
+    "support": 4,
+    "confidence": 0.880,
+    "mean_likert": 2.00,
+    "scope": "task_type"
+  }],
+  "policy": "Apply only relevant preferences. The current request
+    overrides the profile."
+}
+\end{lstlisting}
+\end{PromptBox}
+
+The remote request does not contain source conversation IDs, source hashes,
+old tasks, old answers, corrections, or card evidence strings.

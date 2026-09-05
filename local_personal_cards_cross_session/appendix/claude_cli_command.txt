@@ -1,0 +1,11 @@
+CLAUDE_CODE_USE_BEDROCK=1 AWS_REGION=us-east-1 \
+claude -p \
+  --safe-mode \
+  --no-session-persistence \
+  --model us.anthropic.claude-sonnet-4-5-20250929-v1:0 \
+  --effort medium \
+  --output-format json \
+  --max-budget-usd 0.75 \
+  [--system-prompt SYSTEM_PROMPT] \
+  [--json-schema JUDGE_SCHEMA] \
+  PROMPT

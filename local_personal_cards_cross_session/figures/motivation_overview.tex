@@ -1,0 +1,111 @@
+\begin{tikzpicture}[
+  x=1cm,
+  y=1cm,
+  font=\sffamily,
+  >=Latex,
+  panel/.style={
+    rounded corners=8pt,
+    draw=black!72,
+    line width=1.0pt
+  },
+  block/.style={
+    rounded corners=4pt,
+    draw=black!75,
+    line width=0.9pt,
+    minimum width=2.25cm,
+    minimum height=0.72cm,
+    align=center,
+    font=\small\sffamily
+  },
+  stage/.style={
+    rounded corners=5pt,
+    draw=black!80,
+    line width=1.0pt,
+    minimum width=2.25cm,
+    minimum height=1.30cm,
+    align=center,
+    font=\small\sffamily
+  },
+  flow/.style={->,line width=1.35pt,draw=black!75}
+]
+
+\fill[pcoral!5,rounded corners=8pt] (0.00,0.00) rectangle (7.85,4.75);
+\draw[panel] (0.00,0.00) rectangle (7.85,4.75);
+\fill[plocal!9,rounded corners=8pt] (8.15,0.00) rectangle (17.05,4.75);
+\draw[panel,draw=plocal!70!black] (8.15,0.00) rectangle (17.05,4.75);
+
+\node[rounded corners=7pt,draw=pcoral!70!black,fill=pcoral!22,
+      line width=0.9pt,minimum width=4.20cm,minimum height=0.48cm,
+      font=\bfseries\small\sffamily]
+  at (3.93,4.42) {A.\ Full-history prompting};
+\node[rounded corners=7pt,draw=pgreen!55!black,fill=pgreen!34,
+      line width=0.9pt,minimum width=4.20cm,minimum height=0.48cm,
+      font=\bfseries\small\sffamily]
+  at (12.60,4.42) {B.\ Personal Cards};
+
+\node[block,fill=pamber!16] (past) at (1.62,3.36)
+  {\faIcon{user}\quad Past task};
+\node[block,fill=pblue!13] (answer) at (1.62,2.39)
+  {\faIcon{robot}\quad Old answer};
+\node[block,fill=pcoral!13] (feedback) at (1.62,1.42)
+  {\faIcon{comment-dots}\quad Correction};
+
+\node[stage,fill=premote!11] (remote-a) at (6.36,2.39)
+  {\textcolor{premote!75!black}{\Large\faIcon{cloud}}\\[-1pt]
+   \textbf{Claude CLI}\\[-2pt]
+   \scriptsize Sonnet 4.5};
+
+\draw[flow,draw=pcoral!85!black] (2.90,3.36) -- (5.05,3.36);
+\draw[flow,draw=pcoral!85!black] (2.90,2.39) -- (5.05,2.39);
+\draw[flow,draw=pcoral!85!black] (2.90,1.42) -- (5.05,1.42);
+
+\draw[pcoral!88!black,dashed,line width=1.25pt] (4.37,0.52) -- (4.37,3.92);
+\node[rotate=90,font=\bfseries\scriptsize\sffamily,text=pcoral!88!black]
+  at (4.17,2.22) {DEVICE BOUNDARY};
+
+\node[rounded corners=4pt,draw=pcoral!78!black,fill=pcoral!10,
+      line width=0.9pt,minimum width=6.75cm,minimum height=0.62cm,
+      font=\bfseries\small\sffamily,align=center]
+  at (3.93,0.47) {Raw task, answer, and correction leave the device};
+
+\node[stage,fill=pamber!14] (history) at (9.48,2.67)
+  {\textcolor{pamber!68!black}{\Large\faIcon{comments}}\\[-1pt]
+   \textbf{Past interactions}};
+
+\node[circle,draw=black!80,fill=pcyan!30,line width=1.0pt,
+      minimum size=1.42cm,align=center,font=\scriptsize\sffamily]
+  (local-model) at (11.86,2.67)
+  {\faIcon{microchip}\\[-2pt]\textbf{0.6B}\\[-2pt]local};
+
+\node[stage,fill=white] (cards) at (14.15,3.20)
+  {\textcolor{pgreen!50!black}{\Large\faIcon{address-card}}\\[-1pt]
+   \textbf{Personal Cards}};
+
+\node[rounded corners=5pt,draw=pamber!70!black,fill=pamber!30,
+      line width=0.95pt,minimum width=2.15cm,minimum height=0.72cm,
+      align=center,font=\bfseries\small\sffamily]
+  (gate) at (14.15,1.69) {distinct support\\$\geq 2$};
+
+\node[stage,fill=premote!11] (profile) at (16.45,2.67)
+  {\textcolor{premote!75!black}{\Large\faIcon{cloud}}\\[-1pt]
+   \textbf{Claude CLI}\\[-2pt]
+   \scriptsize Sonnet 4.5};
+
+\draw[flow] (history) -- (local-model);
+\draw[flow] (local-model) -- (cards);
+\draw[flow] (cards) -- (gate);
+\draw[flow,draw=pgreen!48!black] (gate) -- (profile);
+
+\draw[pcoral!88!black,dashed,line width=1.25pt] (15.38,0.52) -- (15.38,3.92);
+\node[rotate=90,font=\bfseries\scriptsize\sffamily,text=pcoral!88!black]
+  at (15.18,2.22) {DEVICE BOUNDARY};
+
+\node[font=\bfseries\scriptsize\sffamily,text=pgreen!42!black,align=center]
+  at (16.15,4.02) {\faIcon{shield-alt}\quad compact profile only};
+
+\node[rounded corners=4pt,draw=pgreen!52!black,fill=pgreen!10,
+      line width=0.9pt,minimum width=7.75cm,minimum height=0.62cm,
+      font=\bfseries\small\sffamily,align=center]
+  at (12.60,0.47) {History stays local; only supported rules cross};
+
+\end{tikzpicture}

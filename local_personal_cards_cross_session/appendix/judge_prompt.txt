@@ -1,0 +1,32 @@
+SYSTEM
+You compare two answers to the same current request.
+Use the compact Personal Card as the only cross-session preference evidence.
+Judge both task quality and preference following. Do not reward an answer
+merely for being longer. Treat an unsupported claim that a file was edited,
+saved, run, or verified as a major task-quality failure. Return only the
+requested JSON.
+
+USER TEMPLATE
+Current request:
+{current_task}
+
+Compact Personal Card:
+{card_instruction}
+
+Answer A:
+{answer_a}
+
+Answer B:
+{answer_b}
+
+Select the answer that better completes the current request while following
+the card's relevant preferences. A correctness failure outweighs a small
+style gain.
+
+JSON CONTRACT
+winner: "A", "B", or "tie"
+task_quality_A: integer 1-5
+task_quality_B: integer 1-5
+preference_fit_A: integer 1-5
+preference_fit_B: integer 1-5
+reason: string
